@@ -746,6 +746,49 @@ function addContractToContractor(id, contract, opts = {}) {
 })();
 
 /* ============================================================
+   DATA EXPORT — real machine-readable CSV / JSON downloads
+============================================================ */
+const csvEscape = (v) => { const s = (v === null || v === undefined) ? '' : String(v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+const toCSV = (headers, rows) => [headers.map(csvEscape).join(','), ...rows.map(r => r.map(csvEscape).join(','))].join('\r\n');
+const downloadBlob = (data, filename, type) => {
+  try {
+    const blob = new Blob([data], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) { console.error('Export failed', e); alert('Export failed: ' + e.message); }
+};
+const downloadCSV = (filename, headers, rows) => downloadBlob('﻿' + toCSV(headers, rows), filename, 'text/csv;charset=utf-8;');
+const downloadJSON = (filename, obj) => downloadBlob(JSON.stringify(obj, null, 2), filename, 'application/json');
+
+const exportPortfolioCSV = (rows) => {
+  const list = rows || liveRows();
+  downloadCSV('CommandView_Portfolio_' + pdfDateSlug() + '.csv',
+    ['Contractor', 'CAGE', 'Contract Value', 'Health Score', 'Open Flags', 'CPARS Rating', 'Subcontracting', 'Days to POP End', 'ACC Center'],
+    list.map(r => [r.name, r.cage, r.valueLabel, r.health, r.flags, r.cpars, r.sub, r.days, r.accCenter]));
+};
+const exportInvoicesCSV = (d) => downloadCSV('CommandView_Invoices_' + safeName(d.shortName) + '_' + pdfDateSlug() + '.csv',
+  ['Invoice Number', 'Amount', 'Submitted', 'Status'], d.invoices.map(iv => [iv.num, iv.amount, iv.date, iv.status]));
+const exportEsrsCSV = (d) => downloadCSV('CommandView_Subcontracting_' + safeName(d.shortName) + '_' + pdfDateSlug() + '.csv',
+  ['Category', 'Committed %', 'Actual %', 'Status'], d.esrs.map(e => [e.cat, e.committed, e.actual, e.note]));
+const exportContractsCSV = (d) => downloadCSV('CommandView_Contracts_' + safeName(d.shortName) + '_' + pdfDateSlug() + '.csv',
+  ['Contract Number', 'Value', 'Type', 'Status', 'Period of Performance'],
+  (d.contracts || []).map(c => [c.number, c.valueLabel || abbrMoney(c.value), c.type, c.status, c.popEnd]));
+const exportContractorJSON = (d) => {
+  const rec = {
+    contractor: d.shortName, cage: d.cage, contractNumber: d.contractNumber, accCenter: d.accCenter,
+    contractValue: d.valueLabel, contractType: d.contractType, healthScore: d.healthScore, healthStatus: d.healthPill,
+    cparsRating: d.cparsRating, subcontractingStatus: d.subStatus, daysToPopEnd: d.daysToPop, openRiskFlags: d.activeFlags,
+    invoices: d.invoices, invoiceTotals: d.invoiceTotals, subcontracting: d.esrs, cpars: d.cpars,
+    obligationBurn: d.burn, auditReadiness: d.audit, riskFlags: d.flags, regulatory: d.regulatory, contracts: d.contracts,
+    exportedBy: 'CommandView — Mission Visibility Platform', exportedAt: new Date().toISOString(),
+    classification: 'UNCLASSIFIED // PROTOTYPE DEMONSTRATION DATA',
+  };
+  downloadJSON('CommandView_Record_' + safeName(d.shortName) + '_' + pdfDateSlug() + '.json', rec);
+};
+
+/* ============================================================
    AUTO-WIDTH CHART WRAPPER
    Deterministic replacement for Recharts ResponsiveContainer:
    measures its own width (ResizeObserver + window resize + delayed
@@ -1624,7 +1667,10 @@ const PortfolioTable = ({ onSelect, activeId, compact }) => {
   return (
     <Panel title="AMC Contractor Portfolio — Health Overview"
       tag={<SourceTag label={`${rows.length} of ${allRows.length}`}/>}
-      right={<Btn size="sm" color="forest" icon={I.Users} locked={!role.canManage} onClick={()=>setShowAdd(true)}>Add Contractor</Btn>}>
+      right={<div className="flex items-center gap-2">
+        <Btn size="sm" color="charcoal" type="outline" icon={I.Download} locked={!role.canGenerate} onClick={()=>exportPortfolioCSV(rows)}>Export</Btn>
+        <Btn size="sm" color="forest" icon={I.Users} locked={!role.canManage} onClick={()=>setShowAdd(true)}>Add Contractor</Btn>
+      </div>}>
       {/* filters */}
       <div className="flex flex-wrap items-end gap-3 mb-4 pb-4 border-b" style={{ borderColor:'#eceee9' }}>
         <label className="flex flex-col gap-1 flex-1 min-w-[220px]">
@@ -1914,6 +1960,42 @@ const ContractsPanel = ({ d, onAdd }) => {
 };
 
 /* ============================================================
+   DATA EXPORT MENU
+============================================================ */
+const ExportMenu = ({ d }) => {
+  const role = useRole();
+  const [open, setOpen] = useState(false);
+  const allowed = role.canGenerate;
+  const opts = [
+    { label: 'AMC Portfolio Overview (CSV)', fn: () => exportPortfolioCSV() },
+    { label: d.shortName + ' — Full Record (JSON)', fn: () => exportContractorJSON(d) },
+    { label: d.shortName + ' — WAWF Invoices (CSV)', fn: () => exportInvoicesCSV(d) },
+    { label: d.shortName + ' — Subcontracting / eSRS (CSV)', fn: () => exportEsrsCSV(d) },
+    { label: d.shortName + ' — Contract Vehicles (CSV)', fn: () => exportContractsCSV(d) },
+  ];
+  return (
+    <div className="relative">
+      <Btn color="charcoal" type="outline" icon={I.Download} locked={!allowed} onClick={()=>setOpen(o=>!o)}>Export Data</Btn>
+      {open && allowed && (
+        <>
+          <div className="fixed inset-0 z-[65]" onClick={()=>setOpen(false)}/>
+          <div className="absolute right-0 mt-1 z-[70] w-[300px] bg-white shadow-2xl cv-scale-in" style={{ border:'1px solid #d7dbd1', borderTop:`3px solid ${C.gold}` }}>
+            <div className="px-4 py-2.5 border-b text-[11px] font-bold uppercase tracking-wide" style={{ borderColor:'#eceee9', color:'#4b5443' }}>Export Data</div>
+            {opts.map((o,i)=>(
+              <button key={i} onClick={()=>{ o.fn(); setOpen(false); }}
+                className="w-full text-left px-4 py-2.5 text-[12.5px] hover:bg-black/[0.03] flex items-center gap-2 border-b" style={{ borderColor:'#f2f3ef', color:C.charcoal }}>
+                <I.FileText size={14} style={{ color:C.forest, flexShrink:0 }}/><span>{o.label}</span>
+              </button>
+            ))}
+            <div className="px-4 py-2 text-[10px]" style={{ color:C.gray }}>Machine-readable export · UNCLASSIFIED demonstration data</div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+/* ============================================================
    DASHBOARD PAGE
 ============================================================ */
 const Dashboard = ({ selectedId, setSelectedId, task, notFound, clearNotFound }) => {
@@ -1934,7 +2016,10 @@ const Dashboard = ({ selectedId, setSelectedId, task, notFound, clearNotFound })
     <div ref={ref}>
       <PageHeader title="Contractor Performance Dashboard"
         subtitle="Real-time visibility across WAWF, eSRS, EDA, CPARS, and SDW">
-        <ContractorSearch onSearch={(id, term)=>{ if(id){ onSelect(id);} else { clearNotFound(term); } }}/>
+        <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+          <ContractorSearch onSearch={(id, term)=>{ if(id){ onSelect(id);} else { clearNotFound(term); } }}/>
+          <ExportMenu d={d}/>
+        </div>
       </PageHeader>
       <ContractStrip d={d}/>
 
