@@ -2236,7 +2236,7 @@ const aiRespond = (q) => {
 
 const AIAssistant = ({ open, setOpen }) => {
   const [messages, setMessages] = useState([
-    { role:'ai', node:<p className="text-[12.5px] leading-relaxed" style={{ color:'#3f463a' }}>I'm the CommandView AI Assistant. Ask me about contractor risk, compliance gaps, invoices, or generate a summary. Try one of the suggestions below.</p> },
+    { role:'ai', node:<p className="text-[12.5px] leading-relaxed" style={{ color:'#3f463a' }}>I'm CV Advisor. Ask me about contractor risk, compliance gaps, invoices, or generate a summary. Try one of the suggestions below.</p> },
   ]);
   const [typing, setTyping] = useState(false);
   const [input, setInput] = useState('');
@@ -2265,7 +2265,7 @@ const AIAssistant = ({ open, setOpen }) => {
         className="fixed bottom-6 right-6 z-[70] flex items-center gap-2.5 pl-4 pr-5 py-3 shadow-2xl transition-transform hover:scale-[1.03]"
         style={{ background:C.gold, color:C.forestDark, borderRadius:'999px' }}>
         <span className="flex items-center justify-center w-8 h-8 rounded-full" style={{ background:C.forest }}><I.Brain size={18} style={{ color:'#fff' }}/></span>
-        <span className="font-bold text-[13px] uppercase tracking-wide">Ask CommandView</span>
+        <span className="font-bold text-[13px] uppercase tracking-wide">CV Advisor</span>
       </button>
 
       {/* panel */}
@@ -2276,7 +2276,7 @@ const AIAssistant = ({ open, setOpen }) => {
             <div className="flex items-center gap-2.5">
               <span className="flex items-center justify-center w-8 h-8 rounded-full" style={{ background:C.gold }}><I.Brain size={17} style={{ color:C.forestDark }}/></span>
               <div className="leading-tight">
-                <div className="font-bold text-[13px]" style={{ color:'#fff' }}>CommandView AI Assistant</div>
+                <div className="font-bold text-[13px]" style={{ color:'#fff' }}>CV Advisor</div>
                 <div className="text-[10px]" style={{ color:'#cbd6bd' }}>Powered by Mission Intelligence</div>
               </div>
             </div>
