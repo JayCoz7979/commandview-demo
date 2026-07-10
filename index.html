@@ -70,6 +70,8 @@
   .cv-typing span { display:inline-block; width:6px; height:6px; border-radius:50%; background:#2D5016; margin:0 2px; animation: cv-blink 1s infinite; }
   .cv-typing span:nth-child(2){ animation-delay:.2s; }
   .cv-typing span:nth-child(3){ animation-delay:.4s; }
+  @keyframes cv-spin { to { transform: rotate(360deg); } }
+  .cv-spin { animation: cv-spin .8s linear infinite; }
   .no-select { -webkit-user-select:none; user-select:none; }
 </style>
 </head>
@@ -1036,49 +1038,118 @@ const NotificationPanel = ({ open, onClose, onGoto }) => {
 /* ============================================================
    LOGIN SCREEN
 ============================================================ */
+const ClassBar = () => (
+  <div className="w-full text-center py-1.5 text-[11px] font-bold uppercase tracking-[0.18em] text-white" style={{ background:C.forest }}>
+    Unclassified  ·  Prototype for U.S. Government Demonstration
+  </div>
+);
+
 const Login = ({ onLogin }) => {
   const [id, setId] = useState('');
   const [pw, setPw] = useState('');
+  const [consent, setConsent] = useState(false);
+  const [authing, setAuthing] = useState(false);
+  const [nudge, setNudge] = useState(false);
+  const authTimer = useRef(null);
+  useEffect(() => () => clearTimeout(authTimer.current), []);
+
+  const gate = (fn) => { if (!consent) { setNudge(true); return; } fn(); };
+  const cacSignIn = () => gate(() => { setAuthing(true); authTimer.current = setTimeout(onLogin, 1300); });
+  const credSignIn = (e) => { e.preventDefault(); gate(onLogin); };
+
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-4 py-10" style={{ background:'linear-gradient(180deg,#ffffff 0%,#f1f3ee 100%)' }}>
-      <div className="flex flex-col items-center mb-8 cv-fade">
-        <img
-          src="commandview-logo.png"
-          alt="CommandView — Mission Visibility Platform"
-          style={{ width: 320, maxWidth: '82vw', height: 'auto' }}
-        />
-        <p className="mt-4 text-[11px] font-semibold tracking-wide" style={{ color:C.gray }}>Secure Application Portal · app.commandviewhq.com</p>
+    <div className="min-h-screen flex flex-col" style={{ background:'linear-gradient(180deg,#ffffff 0%,#f1f3ee 100%)' }}>
+      <ClassBar />
+
+      <div className="flex-1 flex flex-col items-center justify-center px-4 py-8">
+        {/* Logo */}
+        <div className="flex flex-col items-center mb-5 cv-fade">
+          <img src="commandview-logo.png" alt="CommandView — Mission Visibility Platform" style={{ width: 290, maxWidth:'78vw', height:'auto' }} />
+          <p className="mt-3 text-[11px] font-semibold tracking-wide" style={{ color:C.gray }}>Secure Application Portal · app.commandviewhq.com</p>
+        </div>
+
+        {/* Prototype / demonstration notice */}
+        <div className="w-full max-w-[540px] mb-4 flex items-start gap-2.5 p-3 cv-fade" style={{ background:'#faf3df', border:'1px solid #ecdcaf' }}>
+          <I.AlertTriangle size={16} style={{ color:C.goldDark, marginTop:1, flexShrink:0 }}/>
+          <p className="text-[11.5px] leading-relaxed" style={{ color:'#6b5a1f' }}>
+            <b>PROTOTYPE — DEMONSTRATION ENVIRONMENT.</b> A U.S. Government prototype presented for evaluation. All contractor data shown is fictional. This is not an authorized system of record and must not be used to process real contract data or Controlled Unclassified Information (CUI).
+          </p>
+        </div>
+
+        {/* Access card */}
+        <div className="w-full max-w-[540px] bg-white shadow-card cv-scale-in" style={{ border:`1px solid ${C.gold}`, borderTop:`3px solid ${C.gold}` }}>
+          {/* DoD Notice and Consent Banner */}
+          <div className="px-6 pt-6">
+            <div className="text-[10px] font-bold uppercase tracking-wide mb-2" style={{ color:'#4b5443' }}>U.S. Government Notice and Consent Banner</div>
+            <div className="text-[10.5px] leading-relaxed p-3 max-h-[150px] overflow-y-auto" style={{ color:'#4b5443', background:'#f6f7f4', border:'1px solid #e3e6df' }}>
+              You are accessing a U.S. Government (USG) Information System (IS) that is provided for USG-authorized use only. By using this IS (which includes any device attached to this IS), you consent to the following conditions:
+              <ul className="list-disc pl-4 mt-1.5 space-y-1">
+                <li>The USG routinely intercepts and monitors communications on this IS for purposes including, but not limited to, penetration testing, COMSEC monitoring, network operations and defense, personnel misconduct, law enforcement, and counterintelligence investigations.</li>
+                <li>At any time, the USG may inspect and seize data stored on this IS.</li>
+                <li>Communications using, or data stored on, this IS are not private, are subject to routine monitoring, interception, and search, and may be disclosed or used for any USG-authorized purpose.</li>
+                <li>This IS includes security measures (e.g., authentication and access controls) to protect USG interests — not for your personal benefit or privacy.</li>
+                <li>Notwithstanding the above, using this IS does not constitute consent to investigative searching or monitoring of the content of privileged communications or work product related to personal representation or services by attorneys, psychotherapists, or clergy, and their assistants.</li>
+              </ul>
+            </div>
+            <label className="flex items-start gap-2 mt-3 cursor-pointer">
+              <input type="checkbox" checked={consent} onChange={e=>{ setConsent(e.target.checked); if (e.target.checked) setNudge(false); }} className="mt-0.5" style={{ accentColor:C.forest, width:15, height:15 }}/>
+              <span className="text-[11.5px] leading-snug" style={{ color:C.charcoal }}>I have read, understand, and consent to the terms of the U.S. Government Notice and Consent Banner.</span>
+            </label>
+            {nudge && <p className="mt-2 text-[11px] font-semibold" style={{ color:C.critical }}>You must acknowledge and consent to the banner before signing in.</p>}
+          </div>
+
+          {/* Sign-in methods */}
+          <div className="px-6 pb-6 pt-4">
+            <button onClick={cacSignIn} disabled={authing}
+              className={`w-full inline-flex items-center justify-center gap-2.5 px-4 py-3 text-sm font-bold uppercase tracking-wide text-white transition-all ${authing?'opacity-80 cursor-wait':'hover:brightness-110'}`}
+              style={{ background:C.forest, border:`1px solid ${C.forest}` }}>
+              {authing
+                ? <><I.Refresh size={16} className="cv-spin"/> Verifying CAC Certificate…</>
+                : <><I.Shield size={16}/> Sign in with CAC / PIV</>}
+            </button>
+            <p className="text-[10.5px] text-center mt-2" style={{ color:C.gray }}>Insert your Common Access Card and enter your PIN when prompted.</p>
+
+            <div className="flex items-center gap-3 my-4">
+              <div className="flex-1 h-px" style={{ background:'#e3e6df' }}/>
+              <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color:C.gray }}>or use credentials</span>
+              <div className="flex-1 h-px" style={{ background:'#e3e6df' }}/>
+            </div>
+
+            <form onSubmit={credSignIn}>
+              <label className="block text-[11px] font-bold uppercase tracking-wide mb-1.5" style={{ color:'#4b5443' }}>CAC ID / Username (EDIPI)</label>
+              <div className="flex items-center border mb-3 px-3" style={{ borderColor:'#d7dbd1' }}>
+                <I.User size={16} style={{ color:C.gray }}/>
+                <input value={id} onChange={e=>setId(e.target.value)} placeholder="reynolds.jordan.j.1487"
+                       className="w-full px-2.5 py-2.5 text-sm outline-none"/>
+              </div>
+              <label className="block text-[11px] font-bold uppercase tracking-wide mb-1.5" style={{ color:'#4b5443' }}>Password / PIN</label>
+              <div className="flex items-center border mb-4 px-3" style={{ borderColor:'#d7dbd1' }}>
+                <I.Lock size={16} style={{ color:C.gray }}/>
+                <input type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="••••••••"
+                       className="w-full px-2.5 py-2.5 text-sm outline-none"/>
+              </div>
+              <Btn color="charcoal" type="outline" full size="lg">Access with Credentials</Btn>
+            </form>
+
+            <div className="flex items-center justify-center gap-1.5 mt-4">
+              <I.Lock size={12} style={{ color:C.gray }}/>
+              <p className="text-[11px]" style={{ color:C.gray }}>DoD PKI · CAC / PIV Authentication · CMMC Aligned</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer links */}
+        <div className="mt-6 flex flex-col items-center gap-1.5">
+          <a href="https://commandviewhq.com" className="text-[11px] font-semibold tracking-wide inline-flex items-center gap-1" style={{ color:C.forest }}>
+            <I.Link size={12}/> Return to CommandViewHQ.com
+          </a>
+          <p className="text-[11px]" style={{ color:C.gray }}>
+            Powered by <a href="https://cosbyaisolutions.com" className="font-semibold" style={{ color:C.forest }}>Cosby AI Solutions</a>
+          </p>
+        </div>
       </div>
 
-      <form className="w-full max-w-[400px] bg-white shadow-card p-8 cv-scale-in" style={{ border:`1px solid ${C.gold}`, borderTop:`3px solid ${C.gold}` }}
-            onSubmit={(e)=>{ e.preventDefault(); onLogin(); }}>
-        <label className="block text-[11px] font-bold uppercase tracking-wide mb-1.5" style={{ color:'#4b5443' }}>CAC ID or Username</label>
-        <div className="flex items-center border mb-4 px-3" style={{ borderColor:'#d7dbd1' }}>
-          <I.User size={16} style={{ color:C.gray }}/>
-          <input value={id} onChange={e=>setId(e.target.value)} placeholder="j.reynolds"
-                 className="w-full px-2.5 py-2.5 text-sm outline-none" />
-        </div>
-        <label className="block text-[11px] font-bold uppercase tracking-wide mb-1.5" style={{ color:'#4b5443' }}>Password or PIN</label>
-        <div className="flex items-center border mb-6 px-3" style={{ borderColor:'#d7dbd1' }}>
-          <I.Lock size={16} style={{ color:C.gray }}/>
-          <input type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="••••••••"
-                 className="w-full px-2.5 py-2.5 text-sm outline-none" />
-        </div>
-        <Btn color="forest" full size="lg" type="solid">Access CommandView</Btn>
-        <div className="flex items-center justify-center gap-1.5 mt-4">
-          <I.Lock size={12} style={{ color:C.gray }}/>
-          <p className="text-[11px]" style={{ color:C.gray }}>Secure Government Access — CAC Authentication Supported</p>
-        </div>
-      </form>
-
-      <div className="mt-8 flex flex-col items-center gap-1.5">
-        <a href="https://commandviewhq.com" className="text-[11px] font-semibold tracking-wide inline-flex items-center gap-1" style={{ color:C.forest }}>
-          <I.Link size={12}/> Return to CommandViewHQ.com
-        </a>
-        <p className="text-[11px]" style={{ color:C.gray }}>
-          Powered by <a href="https://cosbyaisolutions.com" className="font-semibold" style={{ color:C.forest }}>Cosby AI Solutions</a>
-        </p>
-      </div>
+      <ClassBar />
     </div>
   );
 };
