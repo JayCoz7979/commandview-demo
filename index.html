@@ -1,0 +1,2387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CommandView — Mission Visibility Platform</title>
+<meta name="description" content="CommandView — Government Contractor Performance Monitoring Platform" />
+<link rel="icon" href="favicon.png" type="image/png" />
+
+<!-- React / ReactDOM / PropTypes / Recharts (UMD) -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/prop-types@15/prop-types.min.js" crossorigin></script>
+<script src="https://cdn.jsdelivr.net/npm/recharts@2.15.4/umd/Recharts.min.js" crossorigin></script>
+
+<!-- jsPDF + AutoTable (client-side, real downloadable PDFs) -->
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" crossorigin></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js" crossorigin></script>
+
+<!-- Tailwind (Play CDN) -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          forest: '#2D5016',
+          forestdark: '#22400f',
+          forestlight: '#3a6a1c',
+          gold: '#C9A84C',
+          golddark: '#a8863a',
+          charcoal: '#2B2B2B',
+          critical: '#9e1a1a',
+          criticaldark: '#7d1414',
+        },
+        fontFamily: {
+          sans: ['Inter', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+        },
+        boxShadow: {
+          card: '0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04)',
+        },
+      },
+    },
+  };
+</script>
+
+<!-- Babel standalone (pinned to v7 — classic JSX runtime, no ESM import emission) -->
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.9/babel.min.js"></script>
+
+<style>
+  html, body, #root { height: 100%; }
+  body { background:#f4f5f3; color:#2B2B2B; -webkit-font-smoothing:antialiased; }
+  * { box-sizing: border-box; }
+  ::selection { background: rgba(201,168,76,0.35); }
+  /* thin scrollbar */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: #eceee9; }
+  ::-webkit-scrollbar-thumb { background: #c3c9bd; }
+  ::-webkit-scrollbar-thumb:hover { background: #a9b19f; }
+
+  @keyframes cv-slide-up { from { transform: translateY(24px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  @keyframes cv-fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes cv-scale-in { from { transform: scale(0.96); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  @keyframes cv-blink { 0%,100% { opacity: .25; } 50% { opacity: 1; } }
+  @keyframes cv-progress-indeterminate { 0% { left:-40%; } 100% { left:100%; } }
+  .cv-slide-up { animation: cv-slide-up .28s cubic-bezier(.2,.7,.3,1); }
+  .cv-fade { animation: cv-fade .2s ease; }
+  .cv-scale-in { animation: cv-scale-in .2s ease; }
+  .cv-panel-enter { animation: cv-fade .35s ease; }
+  .cv-typing span { display:inline-block; width:6px; height:6px; border-radius:50%; background:#2D5016; margin:0 2px; animation: cv-blink 1s infinite; }
+  .cv-typing span:nth-child(2){ animation-delay:.2s; }
+  .cv-typing span:nth-child(3){ animation-delay:.4s; }
+  .no-select { -webkit-user-select:none; user-select:none; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+/* @jsxRuntime classic */
+const { useState, useMemo, useRef, useEffect, createElement } = React;
+const RC = (typeof Recharts !== 'undefined' && Recharts) ? Recharts : {};
+const {
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell,
+  LineChart, Line, RadialBarChart, RadialBar, PolarAngleAxis
+} = RC;
+
+/* ============================================================
+   COLOR TOKENS
+============================================================ */
+const C = {
+  forest: '#2D5016',
+  forestDark: '#22400f',
+  gold: '#C9A84C',
+  goldDark: '#a8863a',
+  charcoal: '#2B2B2B',
+  critical: '#9e1a1a',
+  white: '#FFFFFF',
+  offwhite: '#f4f5f3',
+  gray: '#6b7280',
+  lightgray: '#e5e7eb',
+  track: '#e8eae4',
+};
+// map a semantic status to a color
+const statusColor = (s) => ({ green: C.forest, amber: C.gold, red: C.critical })[s] || C.gray;
+
+/* ============================================================
+   INLINE SVG ICON SET (Lucide-style)
+============================================================ */
+const Icon = ({ d, size = 18, stroke = 'currentColor', fill = 'none', sw = 2, children, style, className, viewBox = '0 0 24 24' }) =>
+  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox={viewBox} fill={fill}
+       stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round"
+       style={style} className={className}>
+    {children || (d && <path d={d} />)}
+  </svg>;
+
+const I = {
+  Bell: (p) => <Icon {...p}><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></Icon>,
+  Search: (p) => <Icon {...p}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></Icon>,
+  TrendDown: (p) => <Icon {...p}><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/></Icon>,
+  TrendUp: (p) => <Icon {...p}><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></Icon>,
+  AlertTriangle: (p) => <Icon {...p}><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></Icon>,
+  Check: (p) => <Icon {...p}><polyline points="20 6 9 17 4 12"/></Icon>,
+  CheckCircle: (p) => <Icon {...p}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></Icon>,
+  XCircle: (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></Icon>,
+  AlertCircle: (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></Icon>,
+  FileText: (p) => <Icon {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></Icon>,
+  Download: (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></Icon>,
+  Share: (p) => <Icon {...p}><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></Icon>,
+  X: (p) => <Icon {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></Icon>,
+  ChevronUp: (p) => <Icon {...p}><polyline points="18 15 12 9 6 15"/></Icon>,
+  ChevronDown: (p) => <Icon {...p}><polyline points="6 9 12 15 18 9"/></Icon>,
+  ChevronsUpDown: (p) => <Icon {...p}><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></Icon>,
+  Flag: (p) => <Icon {...p}><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></Icon>,
+  Brain: (p) => <Icon {...p}><path d="M12 5a3 3 0 1 0-5.997.142 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.142 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/></Icon>,
+  Settings: (p) => <Icon {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></Icon>,
+  Grid: (p) => <Icon {...p}><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></Icon>,
+  Users: (p) => <Icon {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></Icon>,
+  Shield: (p) => <Icon {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></Icon>,
+  Clipboard: (p) => <Icon {...p}><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="m9 14 2 2 4-4"/></Icon>,
+  BarChart: (p) => <Icon {...p}><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></Icon>,
+  Wrench: (p) => <Icon {...p}><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></Icon>,
+  Clock: (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></Icon>,
+  Dollar: (p) => <Icon {...p}><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></Icon>,
+  Send: (p) => <Icon {...p}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></Icon>,
+  Filter: (p) => <Icon {...p}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></Icon>,
+  Lock: (p) => <Icon {...p}><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></Icon>,
+  User: (p) => <Icon {...p}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></Icon>,
+  Sparkle: (p) => <Icon {...p}><path d="M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2z"/></Icon>,
+  Refresh: (p) => <Icon {...p}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></Icon>,
+  Link: (p) => <Icon {...p}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></Icon>,
+  Mail: (p) => <Icon {...p}><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></Icon>,
+  Plug: (p) => <Icon {...p}><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></Icon>,
+  Menu: (p) => <Icon {...p}><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></Icon>,
+};
+
+/* ============================================================
+   SHIELD LOGO (inline SVG — forest shield, red/white/blue center, gold rim)
+============================================================ */
+const ShieldLogo = ({ size = 40 }) => (
+  <img
+    src="commandview-shield.png"
+    alt="CommandView shield"
+    width={size}
+    height={size}
+    style={{ display: 'block', objectFit: 'contain' }}
+  />
+);
+
+/* ============================================================
+   FORMAT HELPERS
+============================================================ */
+const fmtMoney = (n) => '$' + n.toLocaleString('en-US');
+const money0 = (n) => '$' + Math.round(n).toLocaleString('en-US');
+const abbrMoney = (n) => {
+  if (n >= 1e6) return '$' + (n/1e6).toFixed(1).replace(/\.0$/,'') + 'M';
+  if (n >= 1e3) return '$' + Math.round(n/1e3) + 'K';
+  return '$' + n;
+};
+
+/* ============================================================
+   DATA — Apex Defense (canonical, exact spec) + generated portfolio
+============================================================ */
+
+const APEX = {
+  id: 'apex',
+  name: 'Apex Defense Solutions LLC',
+  shortName: 'Apex Defense Solutions',
+  cage: '7R4T2',
+  contractNumber: 'W58RGZ-24-C-0042',
+  accCenter: 'ACC APG',
+  value: 5900000,
+  valueLabel: '$5.9M',
+  popStart: 'March 1, 2024',
+  popEnd: 'September 15, 2026',
+  contractType: 'Cost Plus Fixed Fee',
+  co: 'J. Reynolds',
+  healthScore: 67,
+  healthStatus: 'amber',
+  healthPill: 'AT RISK',
+  activeFlags: 3,
+  flagsColor: 'red',
+  cparsRating: 'Satisfactory',
+  cparsColor: 'green',
+  subStatus: 'At Risk',
+  subStatusColor: 'amber',
+  daysToPop: 87,
+  daysColor: 'amber',
+
+  invoices: [
+    { num: 'INV-2024-0441', amount: 287500, date: 'June 3, 2026',  status: 'Accepted', color: 'green', action: 'View' },
+    { num: 'INV-2024-0442', amount: 312000, date: 'June 18, 2026', status: 'Accepted', color: 'green', action: 'View' },
+    { num: 'INV-2024-0443', amount: 198750, date: 'July 1, 2026',  status: 'Pending',  color: 'amber', action: 'Follow Up' },
+    { num: 'INV-2024-0444', amount: 445200, date: 'July 5, 2026',  status: 'Rejected', color: 'red',   action: 'Resolve Now', flag: true },
+    { num: 'INV-2024-0445', amount: 156800, date: 'July 8, 2026',  status: 'Pending',  color: 'amber', action: 'Follow Up' },
+  ],
+  invoiceTotals: { invoiced: 1400250, accepted: 599500, pending: 355800, rejected: 445200 },
+
+  esrs: [
+    { cat: 'SDB',                 committed: 25, actual: 18, status: 'red',   note: 'Behind pace' },
+    { cat: 'WOSB',                committed: 15, actual: 17, status: 'green', note: 'On track' },
+    { cat: 'VOSB',                committed: 10, actual: 9,  status: 'amber', note: 'Slightly behind' },
+    { cat: 'HUBZone',             committed: 12, actual: 5,  status: 'red',   note: 'Critically behind' },
+    { cat: '8(a)',                committed: 20, actual: 22, status: 'green', note: 'On track' },
+    { cat: 'Total Small Business',committed: 82, actual: 71, status: 'amber', note: 'Behind pace' },
+  ],
+  esrsWarning: 'Two subcontracting categories are critically behind plan pace. Intervention required before next reporting period.',
+
+  cpars: {
+    overall: 'SATISFACTORY', overallColor: 'green', trend: 'down',
+    trendLabel: 'Trending Down across last 2 periods',
+    categories: [
+      { label: 'Technical',      color: 'green', rating: 'Very Good' },
+      { label: 'Schedule',       color: 'green', rating: 'Satisfactory' },
+      { label: 'Cost Control',   color: 'amber', rating: 'Satisfactory (Declining)' },
+      { label: 'Management',     color: 'green', rating: 'Satisfactory' },
+      { label: 'Small Business', color: 'red',   rating: 'Marginal' },
+    ],
+    prev: 'Very Good', prev2: 'Very Good',
+    note: 'Overall rating has declined two consecutive periods. Monitor closely.',
+  },
+
+  burn: {
+    obligated: 4200000, total: 5900000, pct: 71,
+    monthlyAvg: 312000, projected: 'August 2026', popEndShort: 'September 2026',
+    gapNote: 'At current burn rate, funds will be exhausted approximately 6 weeks before period of performance ends. Recommend obligation review.',
+    monthly: [
+      { m: 'Jan', v: 298000 }, { m: 'Feb', v: 305000 }, { m: 'Mar', v: 341000 },
+      { m: 'Apr', v: 288000 }, { m: 'May', v: 316000 }, { m: 'Jun', v: 326000, hot: true },
+    ],
+  },
+
+  flags: [
+    { sev: 'CRITICAL', color: 'red', title: 'Rejected Invoice Pending Resolution',
+      desc: 'Invoice INV-2024-0444 for $445,200 was rejected on July 5, 2026. No resubmission on file. Exceeds 5-day resolution threshold.',
+      ref: 'W58RGZ-24-C-0042', action: 'Initiate Resolution' },
+    { sev: 'CRITICAL', color: 'red', title: 'HUBZone Subcontracting Critically Behind Plan',
+      desc: 'HUBZone participation at 5% against 12% contractual commitment. Current shortfall of 7 percentage points with 2 reporting periods remaining. Risk of subcontracting plan default.',
+      ref: 'W58RGZ-24-C-0042', action: 'Issue Cure Notice Warning' },
+    { sev: 'WARNING', color: 'amber', title: 'Period of Performance Expires in 87 Days — No Modification On File',
+      desc: 'Contract W58RGZ-24-C-0042 period of performance ends September 15, 2026. No modification or extension currently on file. Action required to prevent lapse.',
+      ref: 'W58RGZ-24-C-0042', action: 'Initiate Mod Request' },
+  ],
+
+  audit: {
+    score: 78,
+    items: [
+      { label: 'Incurred Cost Submission on file', state: 'green' },
+      { label: 'Timekeeping records current', state: 'green' },
+      { label: 'Indirect rate agreements current', state: 'amber', note: 'Pending renewal' },
+      { label: 'Forward pricing rate agreement active', state: 'green' },
+      { label: 'Labor floor checks completed', state: 'green' },
+      { label: 'Subcontract consent on file', state: 'red', note: 'Missing' },
+      { label: 'Property management system approved', state: 'green' },
+      { label: 'Billing system approved', state: 'green' },
+      { label: 'Estimating system approved', state: 'amber', note: 'Under review' },
+      { label: 'Purchasing system approved', state: 'green' },
+    ],
+  },
+
+  regulatory: [
+    { reg: 'FAR 52.219-9', name: 'Small Business Subcontracting', legacy: 'Compliant', legacyColor: 'green',
+      overhaul: 'Updated language — review required', overhaulColor: 'amber' },
+    { reg: 'DFARS 252.204-7012', name: 'Safeguarding Covered Defense Information', legacy: 'Compliant', legacyColor: 'green',
+      overhaul: 'No change', overhaulColor: 'green' },
+    { reg: 'AFARS 5119.704', name: 'Subcontracting Plan Requirements', legacy: 'At risk', legacyColor: 'red',
+      overhaul: 'Enhanced requirements — immediate action', overhaulColor: 'red' },
+  ],
+  regulatoryNote: 'FAR Overhaul guidance is effective for new solicitations. Two clauses affecting this contract require review.',
+};
+
+// Portfolio summary rows (spec)
+const PORTFOLIO = [
+  { id:'apex',      name:'Apex Defense Solutions', cage:'7R4T2', valueLabel:'$5.9M',  value:5900000,  health:67, healthColor:'amber', flags:3, flagsColor:'red',   cpars:'Satisfactory',   sub:'At Risk',  subColor:'amber', days:87,  accCenter:'ACC APG' },
+  { id:'meridian',  name:'Meridian Tech Group',    cage:'4K8P1', valueLabel:'$12.3M', value:12300000, health:91, healthColor:'green', flags:0, flagsColor:'green', cpars:'Very Good',      sub:'On Track', subColor:'green', days:210, accCenter:'ACC-RSA' },
+  { id:'sentinel',  name:'Sentinel Systems LLC',   cage:'9J2R6', valueLabel:'$3.1M',  value:3100000,  health:43, healthColor:'red',   flags:5, flagsColor:'red',   cpars:'Marginal',       sub:'Critical', subColor:'red',   days:34,  accCenter:'ACC-APG' },
+  { id:'fortis',    name:'Fortis Logistics Inc',   cage:'2M5T9', valueLabel:'$8.7M',  value:8700000,  health:78, healthColor:'green', flags:1, flagsColor:'amber', cpars:'Satisfactory',   sub:'On Track', subColor:'green', days:156, accCenter:'ACC-WRN' },
+  { id:'keystone',  name:'Keystone Defense Corp',  cage:'6L3W4', valueLabel:'$22.1M', value:22100000, health:85, healthColor:'green', flags:1, flagsColor:'amber', cpars:'Very Good',      sub:'On Track', subColor:'green', days:298, accCenter:'ACC-DTA' },
+  { id:'atlas',     name:'Atlas Engineering LLC',  cage:'8N7Q2', valueLabel:'$4.4M',  value:4400000,  health:55, healthColor:'amber', flags:2, flagsColor:'amber', cpars:'Satisfactory',   sub:'At Risk',  subColor:'amber', days:67,  accCenter:'ACC-APG' },
+  { id:'ridgeline', name:'Ridgeline Solutions',    cage:'3P9K7', valueLabel:'$6.8M',  value:6800000,  health:88, healthColor:'green', flags:0, flagsColor:'green', cpars:'Very Good',      sub:'On Track', subColor:'green', days:445, accCenter:'ACC-RSA' },
+  { id:'blackwood', name:'Blackwood Federal Inc',  cage:'5R1M3', valueLabel:'$9.2M',  value:9200000,  health:38, healthColor:'red',   flags:6, flagsColor:'red',   cpars:'Unsatisfactory', sub:'Critical', subColor:'red',   days:21,  accCenter:'ACC-WRN' },
+  { id:'clearfield',name:'Clearfield Defense Group',cage:'7T4N8',valueLabel:'$15.6M', value:15600000, health:72, healthColor:'amber', flags:2, flagsColor:'amber', cpars:'Satisfactory',   sub:'At Risk',  subColor:'amber', days:112, accCenter:'ACC-DTA' },
+  { id:'summit',    name:'Summit Aerospace LLC',   cage:'1W6P5', valueLabel:'$7.3M',  value:7300000,  health:94, healthColor:'green', flags:0, flagsColor:'green', cpars:'Outstanding',    sub:'On Track', subColor:'green', days:389, accCenter:'ACC-RSA' },
+];
+
+/* ------------------------------------------------------------
+   Build a full, internally-consistent contractor record from a
+   portfolio summary row. Apex uses the canonical record.
+------------------------------------------------------------ */
+const CPARS_CATS = ['Technical', 'Schedule', 'Cost Control', 'Management', 'Small Business'];
+const RATING_BY_HEALTH = (h) =>
+  h >= 90 ? 'Very Good' : h >= 78 ? 'Satisfactory' : h >= 60 ? 'Satisfactory' : h >= 45 ? 'Marginal' : 'Marginal';
+
+// deterministic pseudo-random from string seed (so data is stable across renders)
+function seedRand(seed) {
+  let x = 0; for (let i=0;i<seed.length;i++) x = (x*31 + seed.charCodeAt(i)) >>> 0;
+  return () => { x = (x*1103515245 + 12345) & 0x7fffffff; return x / 0x7fffffff; };
+}
+
+function buildContractor(row) {
+  if (row.id === 'apex') return APEX;
+  const rnd = seedRand(row.id);
+  const contractNumber = `W91${(row.cage[0]||'0')}QZ-${20+Math.floor(rnd()*5)}-C-${String(1000+Math.floor(rnd()*8999)).slice(0,4)}`;
+  const obligatedPct = Math.min(96, Math.max(28, Math.round(row.health*0.6 + 30 + (row.days<60?15:0) )));
+  const obligated = Math.round(row.value * obligatedPct/100);
+  const monthlyAvg = Math.round(obligated / (10 + Math.floor(rnd()*8)));
+  // invoices
+  const baseAmt = Math.round(row.value * 0.04);
+  const statuses = row.flags >= 4
+    ? ['Accepted','Rejected','Pending','Rejected','Pending']
+    : row.flags >= 2
+      ? ['Accepted','Accepted','Pending','Rejected','Pending']
+      : ['Accepted','Accepted','Accepted','Pending','Accepted'];
+  const dateList = ['May 22, 2026','June 6, 2026','June 20, 2026','July 2, 2026','July 8, 2026'];
+  const invoices = statuses.map((st, i) => {
+    const amt = Math.round(baseAmt * (0.7 + rnd()*0.9));
+    const color = st==='Accepted'?'green':st==='Pending'?'amber':'red';
+    const action = st==='Accepted'?'View':st==='Pending'?'Follow Up':'Resolve Now';
+    return { num:`INV-2026-0${210+i}${row.cage[0]}`, amount:amt, date:dateList[i], status:st, color, action, flag: st==='Rejected' };
+  });
+  const totInv = invoices.reduce((s,x)=>s+x.amount,0);
+  const totAcc = invoices.filter(x=>x.status==='Accepted').reduce((s,x)=>s+x.amount,0);
+  const totPen = invoices.filter(x=>x.status==='Pending').reduce((s,x)=>s+x.amount,0);
+  const totRej = invoices.filter(x=>x.status==='Rejected').reduce((s,x)=>s+x.amount,0);
+
+  const subShift = row.subColor==='red' ? -14 : row.subColor==='amber' ? -8 : +2;
+  const mk = (cat, commit) => {
+    const actual = Math.max(2, Math.min(commit+8, commit + subShift + Math.round((rnd()-0.5)*6)));
+    const diff = actual - commit;
+    const status = diff >= 0 ? 'green' : diff >= -5 ? 'amber' : 'red';
+    const note = diff >= 1 ? 'On track' : diff >= -3 ? 'Slightly behind' : diff >= -6 ? 'Behind pace' : 'Critically behind';
+    return { cat, committed:commit, actual, status, note };
+  };
+  const esrs = [ mk('SDB',25), mk('WOSB',15), mk('VOSB',10), mk('HUBZone',12), mk('8(a)',20) ];
+  const tsbCommit = 82;
+  const tsbActual = Math.round(esrs.reduce((s,x)=>s+x.actual,0)/esrs.length * (82/17.4));
+  esrs.push({ cat:'Total Small Business', committed:tsbCommit, actual:Math.min(90,tsbActual), status: row.subColor, note: row.subColor==='green'?'On track':row.subColor==='amber'?'Behind pace':'Critically behind' });
+  const behind = esrs.filter(e=>e.status==='red').length;
+
+  const cRating = RATING_BY_HEALTH(row.health);
+  const cColor = row.health>=78?'green':row.health>=55?'amber':'red';
+  const catRatings = CPARS_CATS.map((label,i) => {
+    const roll = row.health + (rnd()-0.5)*24;
+    const color = roll>=80?'green':roll>=58?'amber':'red';
+    const rating = color==='green'?(roll>=90?'Very Good':'Satisfactory'):color==='amber'?'Satisfactory (Declining)':'Marginal';
+    return { label, color, rating };
+  });
+  const trend = row.health < 75 ? 'down' : row.health > 88 ? 'up' : 'flat';
+
+  const auditScore = Math.max(30, Math.min(96, Math.round(row.health*0.85 + 12)));
+  const auditLabels = APEX.audit.items.map(x=>x.label);
+  const auditItems = auditLabels.map((label,i) => {
+    const roll = auditScore + (rnd()-0.5)*40;
+    const state = roll>=75?'green':roll>=55?'amber':'red';
+    const note = state==='amber'?'Under review':state==='red'?'Missing':undefined;
+    return { label, state, note };
+  });
+
+  // flags — count matches row.flags
+  const flagBank = [
+    { sev:'CRITICAL', color:'red', title:'Rejected Invoice Pending Resolution',
+      desc:`Invoice ${invoices.find(x=>x.status==='Rejected')?.num || 'on file'} was rejected and exceeds the 5-day resolution threshold with no resubmission recorded.`, action:'Initiate Resolution' },
+    { sev:'CRITICAL', color:'red', title:'Subcontracting Plan Critically Behind',
+      desc:'One or more small business categories are tracking well below contractual commitment with limited reporting periods remaining. Risk of subcontracting plan default.', action:'Issue Cure Notice Warning' },
+    { sev:'CRITICAL', color:'red', title:'CPARS Rating Decline',
+      desc:'Overall performance rating has declined across consecutive assessment periods. Cost control and small business dimensions driving the decline.', action:'Schedule Performance Review' },
+    { sev:'WARNING', color:'amber', title:`Period of Performance Expires in ${row.days} Days — No Modification On File`,
+      desc:`Contract ${contractNumber} period of performance is approaching expiration with no modification or extension currently on file.`, action:'Initiate Mod Request' },
+    { sev:'WARNING', color:'amber', title:'Burn Rate Exceeds Obligation Pace',
+      desc:'Monthly burn rate projects fund exhaustion ahead of the period of performance end date. Obligation review recommended.', action:'Request Obligation Review' },
+    { sev:'CRITICAL', color:'red', title:'Missing Subcontract Consent',
+      desc:'Required subcontract consent documentation is not on file, creating audit exposure under DCAA review.', action:'Compile Consent Package' },
+  ];
+  const flags = flagBank.slice(0, row.flags).map(f => ({ ...f, ref: contractNumber }));
+
+  const monthly = ['Jan','Feb','Mar','Apr','May','Jun'].map((m,i) => ({
+    m, v: Math.round(monthlyAvg*(0.82 + rnd()*0.4)), hot: i===5
+  }));
+
+  const projMonth = obligatedPct > 80 ? 'July 2026' : obligatedPct > 65 ? 'September 2026' : 'November 2026';
+
+  const reg = [
+    { reg:'FAR 52.219-9', name:'Small Business Subcontracting', legacy: row.subColor==='red'?'At risk':'Compliant', legacyColor: row.subColor==='red'?'red':'green', overhaul:'Updated language — review required', overhaulColor:'amber' },
+    { reg:'DFARS 252.204-7012', name:'Safeguarding Covered Defense Information', legacy:'Compliant', legacyColor:'green', overhaul:'No change', overhaulColor:'green' },
+    { reg:'AFARS 5119.704', name:'Subcontracting Plan Requirements', legacy: row.subColor==='green'?'Compliant':'At risk', legacyColor: row.subColor==='green'?'green':'red', overhaul: row.subColor==='green'?'Enhanced requirements — review':'Enhanced requirements — immediate action', overhaulColor: row.subColor==='green'?'amber':'red' },
+  ];
+
+  return {
+    id: row.id, name: row.name.includes('LLC')||row.name.includes('Inc')||row.name.includes('Corp')||row.name.includes('Group')?row.name:row.name,
+    shortName: row.name, cage: row.cage, contractNumber,
+    accCenter: row.accCenter, value: row.value, valueLabel: row.valueLabel,
+    popStart: 'January 15, 2024',
+    popEnd: (()=>{ // approximate POP end from days
+      return 'See portfolio';
+    })(),
+    contractType: ['Cost Plus Fixed Fee','Firm Fixed Price','Time and Materials','Cost Plus Incentive Fee'][Math.floor(rnd()*4)],
+    co: 'J. Reynolds',
+    healthScore: row.health, healthStatus: row.healthColor,
+    healthPill: row.health>=78?'HEALTHY':row.health>=55?'AT RISK':'CRITICAL',
+    activeFlags: row.flags, flagsColor: row.flagsColor,
+    cparsRating: row.cpars, cparsColor: cColor,
+    subStatus: row.sub, subStatusColor: row.subColor,
+    daysToPop: row.days, daysColor: row.days<45?'red':row.days<120?'amber':'green',
+    invoices, invoiceTotals: { invoiced: totInv, accepted: totAcc, pending: totPen, rejected: totRej },
+    esrs, esrsWarning: behind>=2
+      ? `${behind} subcontracting categories are critically behind plan pace. Intervention required before next reporting period.`
+      : behind===1 ? 'One subcontracting category is behind plan pace. Monitor before the next reporting period.'
+      : 'All subcontracting categories are tracking to or above plan. No intervention required.',
+    cpars: {
+      overall: cRating.toUpperCase(), overallColor: cColor, trend,
+      trendLabel: trend==='down'?'Trending Down across last 2 periods':trend==='up'?'Trending Up across last 2 periods':'Stable across last 2 periods',
+      categories: catRatings,
+      prev: row.health>=85?'Very Good':row.health>=70?'Satisfactory':'Marginal',
+      prev2: row.health>=85?'Very Good':row.health>=70?'Very Good':'Satisfactory',
+      note: trend==='down'?'Overall rating has declined. Monitor closely.':trend==='up'?'Overall rating is improving across recent periods.':'Overall rating is stable across recent periods.',
+    },
+    burn: {
+      obligated, total: row.value, pct: obligatedPct, monthlyAvg,
+      projected: projMonth, popEndShort: 'per POP schedule',
+      gapNote: obligatedPct>78
+        ? 'At current burn rate, funds will be exhausted before period of performance ends. Recommend obligation review.'
+        : 'Burn rate is tracking within obligation limits. No immediate obligation action required.',
+      monthly,
+    },
+    flags,
+    audit: { score: auditScore, items: auditItems },
+    regulatory: reg,
+    regulatoryNote: 'FAR Overhaul guidance is effective for new solicitations. Clauses affecting this contract require review.',
+  };
+}
+
+// prebuild all
+const CONTRACTORS = {};
+PORTFOLIO.forEach(r => { CONTRACTORS[r.id] = buildContractor(r); });
+
+// seed each contractor with a primary contract (Stage: live contracts)
+const primaryContract = (rec) => ({
+  number: rec.contractNumber, valueLabel: rec.valueLabel, value: rec.value,
+  type: rec.contractType, status: 'Active',
+  popEnd: rec.id === 'apex' ? rec.popEnd : `${rec.daysToPop} days remaining`,
+  awarded: rec.popStart,
+});
+Object.values(CONTRACTORS).forEach(rec => { if (!rec.contracts) rec.contracts = [primaryContract(rec)]; });
+
+/* ============================================================
+   PDF GENERATION (jsPDF + AutoTable) — real, downloadable docs
+   built from the selected contractor's actual data.
+============================================================ */
+const RGB = { forest:[45,80,22], gold:[201,168,76], charcoal:[43,43,43], red:[158,26,26], amber:[168,134,58], gray:[120,120,120], line:[227,230,223], soft:[234,240,228] };
+const pdfNowStamp = () => {
+  const d = new Date();
+  return d.toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' }) +
+    ' ' + d.toLocaleTimeString('en-US', { hour12:false }) + ' EDT';
+};
+const pdfDateSlug = () => new Date().toISOString().slice(0,10);
+const safeName = (s) => (s || 'CommandView').replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '');
+
+const CONTRACTOR_TITLES = {
+  'dcaa-audit': 'DCAA Audit Package',
+  'regulatory': 'Regulatory Compliance Report',
+  'tool:incurred': 'Incurred Cost Audit Package',
+  'tool:fpra': 'Forward Pricing Rate Agreement Support',
+  'tool:surveillance': 'DCMA Contractor Surveillance Report',
+  'tool:cure': 'Cure Notice Documentation Package',
+};
+const PORTFOLIO_TITLES = {
+  'report:portfolio': 'Portfolio Health Summary Report',
+  'report:dcaa': 'DCAA Audit Readiness Report',
+  'report:subcontracting': 'Subcontracting Compliance Report',
+  'report:fy': 'Fiscal Year End Obligation Report',
+};
+
+function pdfHeader(doc, title, subtitle) {
+  const W = doc.internal.pageSize.getWidth();
+  doc.setFillColor.apply(doc, RGB.forest); doc.rect(0, 0, W, 58, 'F');
+  doc.setFillColor.apply(doc, RGB.gold); doc.rect(0, 58, W, 3, 'F');
+  doc.setTextColor.apply(doc, RGB.gold); doc.setFont('helvetica', 'bold'); doc.setFontSize(15);
+  doc.text('COMMANDVIEW', 40, 28);
+  doc.setTextColor(226, 203, 132); doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
+  doc.text('MISSION VISIBILITY PLATFORM', 40, 40);
+  doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+  doc.text(title, W - 40, 26, { align:'right' });
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(219, 224, 208);
+  doc.text(subtitle, W - 40, 40, { align:'right' });
+  return 80;
+}
+function pdfSection(doc, y, label) {
+  const W = doc.internal.pageSize.getWidth();
+  if (y > doc.internal.pageSize.getHeight() - 90) { doc.addPage(); y = 80; }
+  doc.setFillColor.apply(doc, RGB.soft); doc.rect(40, y - 11, W - 80, 18, 'F');
+  doc.setFillColor.apply(doc, RGB.gold); doc.rect(40, y - 11, 3, 18, 'F');
+  doc.setTextColor.apply(doc, RGB.forest); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+  doc.text(String(label).toUpperCase(), 50, y + 1);
+  return y + 22;
+}
+function pdfKeyVals(doc, y, pairs) {
+  const W = doc.internal.pageSize.getWidth();
+  const colW = (W - 80) / 2;
+  doc.setFontSize(9);
+  pairs.forEach((p, i) => {
+    const x = 40 + (i % 2) * colW;
+    const yy = y + Math.floor(i / 2) * 16;
+    doc.setTextColor.apply(doc, RGB.gray); doc.setFont('helvetica', 'normal'); doc.text(String(p[0]), x, yy);
+    doc.setTextColor.apply(doc, RGB.charcoal); doc.setFont('helvetica', 'bold'); doc.text(String(p[1]), x + 100, yy);
+  });
+  return y + Math.ceil(pairs.length / 2) * 16 + 10;
+}
+function pdfTable(doc, y, head, body) {
+  doc.autoTable({
+    startY: y, head: [head], body,
+    theme: 'grid', margin: { left:40, right:40 },
+    headStyles: { fillColor: RGB.forest, textColor: [255,255,255], fontSize: 8, fontStyle: 'bold' },
+    bodyStyles: { fontSize: 8, textColor: RGB.charcoal },
+    alternateRowStyles: { fillColor: [248, 250, 246] },
+    styles: { cellPadding: 4, lineColor: RGB.line, lineWidth: 0.5 },
+  });
+  return doc.lastAutoTable.finalY + 20;
+}
+function pdfFooter(doc) {
+  const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight();
+  const pages = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    doc.setDrawColor.apply(doc, RGB.gold); doc.setLineWidth(2); doc.line(0, H - 30, W, H - 30);
+    doc.setFontSize(7); doc.setTextColor.apply(doc, RGB.gray); doc.setFont('helvetica', 'normal');
+    doc.text('Powered by Cosby AI Solutions   ·   Secure Government Platform   ·   All Data Encrypted   ·   Audit Logged', 40, H - 16);
+    doc.text('Page ' + i + ' of ' + pages, W - 40, H - 16, { align:'right' });
+  }
+}
+
+function buildContractorPdf(kind, rec) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'pt', format:'letter' });
+  const title = CONTRACTOR_TITLES[kind] || 'CommandView Contractor Report';
+  let y = pdfHeader(doc, title, rec.shortName + '  ·  CAGE ' + rec.cage);
+
+  doc.setFontSize(8); doc.setTextColor.apply(doc, RGB.gray); doc.setFont('helvetica', 'normal');
+  doc.text('Generated ' + pdfNowStamp() + '     Contracting Officer: ' + rec.co, 40, y); y += 14;
+
+  y = pdfSection(doc, y + 8, 'Contract Summary');
+  y = pdfKeyVals(doc, y, [
+    ['Contractor', rec.shortName], ['CAGE Code', rec.cage],
+    ['Contract No.', rec.contractNumber], ['ACC Center', rec.accCenter],
+    ['Contract Value', rec.valueLabel], ['Contract Type', rec.contractType],
+    ['Health Score', rec.healthScore + ' / 100  (' + rec.healthPill + ')'], ['CPARS Rating', rec.cparsRating],
+    ['Subcontracting', rec.subStatus], ['Days to POP End', String(rec.daysToPop)],
+    ['Active Contracts', String((rec.contracts || []).length)], ['Open Risk Flags', String(rec.activeFlags)],
+  ]);
+
+  y = pdfSection(doc, y, 'WAWF Invoice History');
+  y = pdfTable(doc, y, ['Invoice Number', 'Amount', 'Submitted', 'Status'],
+    rec.invoices.map(iv => [iv.num, fmtMoney(iv.amount), iv.date, iv.status]));
+  const t = rec.invoiceTotals;
+  y = pdfKeyVals(doc, y, [
+    ['Total Invoiced', money0(t.invoiced)], ['Total Accepted', money0(t.accepted)],
+    ['Total Pending', money0(t.pending)], ['Total Rejected', money0(t.rejected)],
+  ]);
+
+  y = pdfSection(doc, y, 'Small Business Subcontracting (eSRS)');
+  y = pdfTable(doc, y, ['Category', 'Committed %', 'Actual %', 'Status'],
+    rec.esrs.map(e => [e.cat, e.committed + '%', e.actual + '%', e.note]));
+
+  y = pdfSection(doc, y, 'CPARS Performance Ratings');
+  y = pdfTable(doc, y, ['Assessment Area', 'Rating'],
+    [['Overall', rec.cpars.overall]].concat(rec.cpars.categories.map(c => [c.label, c.rating])));
+
+  y = pdfSection(doc, y, 'Obligation & Burn Rate (SDW)');
+  y = pdfKeyVals(doc, y, [
+    ['Obligated', money0(rec.burn.obligated)], ['Total Contract Value', money0(rec.burn.total)],
+    ['Burn Rate', rec.burn.pct + '%'], ['Monthly Burn', money0(rec.burn.monthlyAvg)],
+    ['Projected Fund Exhaustion', rec.burn.projected], ['Assessment', rec.burn.gapNote],
+  ]);
+
+  y = pdfSection(doc, y, 'DCAA Audit Readiness  (Score ' + rec.audit.score + '/100)');
+  y = pdfTable(doc, y, ['Readiness Item', 'Status'],
+    rec.audit.items.map(it => [it.label, it.state === 'green' ? 'On File / Complete' : (it.note || (it.state === 'red' ? 'Missing' : 'Review'))]));
+
+  if (rec.flags && rec.flags.length) {
+    y = pdfSection(doc, y, 'Open Risk Flags & Recommended Actions');
+    y = pdfTable(doc, y, ['Severity', 'Finding', 'Recommended Action'],
+      rec.flags.map(f => [f.sev, f.title, f.action]));
+  }
+
+  y = pdfSection(doc, y, 'Regulatory & FAR Monitoring');
+  y = pdfTable(doc, y, ['Regulation', 'Legacy FAR', 'FAR Overhaul'],
+    rec.regulatory.map(r => [r.reg + ' — ' + r.name, r.legacy, r.overhaul]));
+
+  pdfFooter(doc);
+  doc.save('CommandView_' + safeName(title) + '_' + safeName(rec.shortName) + '_' + pdfDateSlug() + '.pdf');
+}
+
+function buildPortfolioPdf(kind, list) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'pt', format:'letter' });
+  const title = PORTFOLIO_TITLES[kind] || 'CommandView Portfolio Report';
+  let y = pdfHeader(doc, title, 'AMC Contractor Portfolio  ·  ' + list.length + ' contractors');
+  doc.setFontSize(8); doc.setTextColor.apply(doc, RGB.gray); doc.setFont('helvetica', 'normal');
+  doc.text('Generated ' + pdfNowStamp() + '     Contracting Officer: J. Reynolds', 40, y); y += 14;
+
+  const totalValue = list.reduce((s, r) => s + r.value, 0);
+  const avgHealth = Math.round(list.reduce((s, r) => s + r.healthScore, 0) / list.length);
+  const totalFlags = list.reduce((s, r) => s + r.activeFlags, 0);
+
+  y = pdfSection(doc, y + 8, 'Portfolio Aggregate');
+  y = pdfKeyVals(doc, y, [
+    ['Contractors Monitored', String(list.length)], ['Total Contract Value', abbrMoney(totalValue)],
+    ['Average Health Score', avgHealth + ' / 100'], ['Total Open Risk Flags', String(totalFlags)],
+  ]);
+
+  if (kind === 'report:dcaa') {
+    y = pdfSection(doc, y, 'DCAA Audit Readiness by Contractor');
+    y = pdfTable(doc, y, ['Contractor', 'CAGE', 'Readiness', 'Open Gaps'],
+      list.map(r => [r.shortName, r.cage, r.audit.score + '/100',
+        String(r.audit.items.filter(i => i.state !== 'green').length)]));
+  } else if (kind === 'report:subcontracting') {
+    y = pdfSection(doc, y, 'Subcontracting Compliance by Contractor');
+    y = pdfTable(doc, y, ['Contractor', 'CAGE', 'Total SB Actual', 'Total SB Committed', 'Status'],
+      list.map(r => {
+        const tsb = r.esrs.find(e => e.cat === 'Total Small Business') || { actual:'-', committed:'-' };
+        return [r.shortName, r.cage, tsb.actual + '%', tsb.committed + '%', r.subStatus];
+      }));
+  } else if (kind === 'report:fy') {
+    y = pdfSection(doc, y, 'Obligation & Burn Posture by Contractor');
+    y = pdfTable(doc, y, ['Contractor', 'Obligated', 'Ceiling', 'Burn %', 'Funds Exhausted'],
+      list.map(r => [r.shortName, abbrMoney(r.burn.obligated), abbrMoney(r.burn.total), r.burn.pct + '%', r.burn.projected]));
+  } else {
+    y = pdfSection(doc, y, 'Contractor Health Overview');
+    y = pdfTable(doc, y, ['Contractor', 'CAGE', 'Value', 'Health', 'Flags', 'CPARS', 'Subcontracting', 'Days to POP'],
+      list.map(r => [r.shortName, r.cage, r.valueLabel, String(r.healthScore), String(r.activeFlags), r.cparsRating, r.subStatus, String(r.daysToPop)]));
+  }
+
+  pdfFooter(doc);
+  doc.save('CommandView_' + safeName(title) + '_' + pdfDateSlug() + '.pdf');
+}
+
+// Unified entry: kind decides contractor vs portfolio document
+function generateCommandViewPdf({ kind, rec, list }) {
+  try {
+    if (!window.jspdf || !window.jspdf.jsPDF) { alert('PDF engine still loading. Please try again in a moment.'); return; }
+    if (String(kind).startsWith('report:')) buildPortfolioPdf(kind, list || Object.values(CONTRACTORS));
+    else buildContractorPdf(kind, rec);
+  } catch (e) {
+    console.error('PDF generation failed', e);
+    alert('Could not generate the PDF: ' + e.message);
+  }
+}
+
+/* ============================================================
+   LIVE DATA STORE — mutable contractor set + contracts,
+   persisted to localStorage so the demo behaves like a backend.
+============================================================ */
+const cvStore = {
+  l: new Set(),
+  sub(fn) { this.l.add(fn); return () => this.l.delete(fn); },
+  emit() { this.l.forEach(fn => { try { fn(); } catch (e) {} }); },
+};
+// components that render live data call this to re-render on any change
+function useCvVersion() {
+  const [, setV] = useState(0);
+  useEffect(() => cvStore.sub(() => setV(v => v + 1)), []);
+}
+
+const rowFromRecord = (rec) => ({
+  id: rec.id, name: rec.shortName, cage: rec.cage, valueLabel: rec.valueLabel, value: rec.value,
+  health: rec.healthScore, healthColor: rec.healthStatus, flags: rec.activeFlags, flagsColor: rec.flagsColor,
+  cpars: rec.cparsRating, sub: rec.subStatus, subColor: rec.subStatusColor, days: rec.daysToPop, accCenter: rec.accCenter,
+});
+const liveRows = () => Object.values(CONTRACTORS).map(rowFromRecord);
+
+const cvSlug = (s) => String(s || 'new').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 12) || 'new';
+const colorForHealth = (h) => h >= 78 ? 'green' : h >= 55 ? 'amber' : 'red';
+const colorForFlags = (n) => n === 0 ? 'green' : n <= 2 ? 'amber' : 'red';
+const colorForSub = (s) => s === 'On Track' ? 'green' : s === 'At Risk' ? 'amber' : 'red';
+
+function rowFromForm(f) {
+  return {
+    id: f.id, name: f.name, cage: (f.cage || '').toUpperCase(), valueLabel: abbrMoney(f.value), value: f.value,
+    health: f.health, healthColor: colorForHealth(f.health),
+    flags: f.flags, flagsColor: colorForFlags(f.flags),
+    cpars: f.cpars, sub: f.sub, subColor: colorForSub(f.sub),
+    days: f.days, accCenter: f.accCenter,
+  };
+}
+
+// persistence: store only user additions and replay them over the deterministic seed
+const CV_LS_KEY = 'commandview_demo_v1';
+let CV_CUSTOM = { contractors: [], contracts: {} };
+function cvSave() { try { localStorage.setItem(CV_LS_KEY, JSON.stringify(CV_CUSTOM)); } catch (e) {} }
+
+function addContractor(form, opts = {}) {
+  const seed = form.id || (cvSlug(form.name) + '_' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36));
+  const f = { ...form, id: seed };
+  const rec = buildContractor(rowFromForm(f));
+  if (f.contractNumber) rec.contractNumber = f.contractNumber;
+  if (f.contractType) rec.contractType = f.contractType;
+  rec.valueLabel = abbrMoney(f.value); rec.value = f.value;
+  rec.contracts = [primaryContract(rec)];
+  rec.custom = true;
+  CONTRACTORS[seed] = rec;
+  if (opts.persist !== false) { CV_CUSTOM.contractors.push(f); cvSave(); }
+  if (opts.emit !== false) cvStore.emit();
+  return seed;
+}
+
+function addContractToContractor(id, contract, opts = {}) {
+  const rec = CONTRACTORS[id];
+  if (!rec) return;
+  rec.contracts = (rec.contracts || []).concat([contract]);
+  if (opts.persist !== false) { (CV_CUSTOM.contracts[id] = CV_CUSTOM.contracts[id] || []).push(contract); cvSave(); }
+  if (opts.emit !== false) cvStore.emit();
+}
+
+(function cvLoad() {
+  try {
+    const raw = localStorage.getItem(CV_LS_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    CV_CUSTOM = { contractors: parsed.contractors || [], contracts: parsed.contracts || {} };
+    CV_CUSTOM.contractors.forEach(f => addContractor(f, { persist: false, emit: false }));
+    Object.keys(CV_CUSTOM.contracts).forEach(id => {
+      (CV_CUSTOM.contracts[id] || []).forEach(c => addContractToContractor(id, c, { persist: false, emit: false }));
+    });
+  } catch (e) { console.warn('CommandView: could not restore saved data', e); }
+})();
+
+/* ============================================================
+   AUTO-WIDTH CHART WRAPPER
+   Deterministic replacement for Recharts ResponsiveContainer:
+   measures its own width (ResizeObserver + window resize + delayed
+   fallback) and passes an explicit pixel width to the chart, so
+   charts always draw even where ResizeObserver is unreliable.
+============================================================ */
+const AutoWidth = ({ height, children }) => {
+  const ref = useRef(null);
+  const [w, setW] = useState(0);
+  useEffect(() => {
+    const measure = () => { if (ref.current) { const nw = ref.current.offsetWidth; if (nw > 0) setW(nw); } };
+    measure();
+    const t1 = setTimeout(measure, 40);
+    const t2 = setTimeout(measure, 200);
+    let ro = null;
+    if (typeof ResizeObserver !== 'undefined' && ref.current) { ro = new ResizeObserver(measure); ro.observe(ref.current); }
+    window.addEventListener('resize', measure);
+    return () => { clearTimeout(t1); clearTimeout(t2); window.removeEventListener('resize', measure); if (ro) ro.disconnect(); };
+  }, []);
+  return <div ref={ref} style={{ width:'100%', height }}>{w > 0 ? children(w) : null}</div>;
+};
+
+/* ============================================================
+   SHARED UI PRIMITIVES
+============================================================ */
+const Pill = ({ color, children, small }) => {
+  const c = statusColor(color);
+  return (
+    <span className={`inline-flex items-center font-semibold uppercase tracking-wide ${small?'text-[10px] px-2 py-0.5':'text-[11px] px-2.5 py-1'}`}
+          style={{ color: c, background: `${c}1a`, border: `1px solid ${c}55` }}>
+      {children}
+    </span>
+  );
+};
+
+const Dot = ({ color }) => <span className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: statusColor(color) }} />;
+
+const SourceTag = ({ label, live }) => (
+  <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider px-2 py-1"
+        style={{ color: C.forest, background: '#eaf0e4', border:'1px solid #d3e0c6' }}>
+    {live && <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background:'#2D5016', boxShadow:'0 0 0 0 #2D5016' }} />}
+    {label}
+  </span>
+);
+
+const Panel = ({ title, tag, children, className='', right }) => (
+  <section className={`bg-white border shadow-card ${className}`} style={{ borderColor:'#e3e6df' }}>
+    <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b" style={{ borderColor:'#eceee9' }}>
+      <h3 className="text-[13px] font-bold uppercase tracking-wide" style={{ color:C.charcoal }}>{title}</h3>
+      <div className="flex items-center gap-2">{right}{tag}</div>
+    </div>
+    <div className="p-5">{children}</div>
+  </section>
+);
+
+const Btn = ({ children, onClick, color='forest', size='md', full, icon:IconC, type='solid', disabled }) => {
+  const palette = {
+    forest: C.forest, gold: C.gold, red: C.critical, amber: C.gold, charcoal: C.charcoal,
+  }[color] || C.forest;
+  const pad = size==='sm' ? 'px-3 py-1.5 text-xs' : size==='lg' ? 'px-6 py-3 text-sm' : 'px-4 py-2 text-[13px]';
+  const base = `inline-flex items-center justify-center gap-2 font-semibold uppercase tracking-wide transition-all ${pad} ${full?'w-full':''} ${disabled?'opacity-50 cursor-not-allowed':'hover:brightness-110 active:brightness-95'}`;
+  const style = type==='outline'
+    ? { color: palette, background:'transparent', border:`1.5px solid ${palette}` }
+    : { color: (color==='gold'||color==='amber')?'#2B2B2B':'#fff', background: palette, border:`1px solid ${palette}` };
+  return <button className={base} style={style} onClick={disabled?undefined:onClick}>{IconC && <IconC size={size==='sm'?14:16}/>}{children}</button>;
+};
+
+// sortable header cell
+const Th = ({ label, sortKey, sort, setSort, align='left', className='' }) => {
+  const sortable = !!(sortKey && sort && setSort);
+  const active = sortable && sort.key === sortKey;
+  return (
+    <th className={`px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide select-none ${sortable?'cursor-pointer hover:bg-black/5':''} ${className}`}
+        style={{ color:'#4b5443', textAlign:align }}
+        onClick={sortable ? () => setSort(s => ({ key: sortKey, dir: s.key===sortKey && s.dir==='asc' ? 'desc' : 'asc' })) : undefined}>
+      <span className={`inline-flex items-center gap-1 ${align==='right'?'flex-row-reverse':''}`}>
+        {label}
+        {sortable && (active
+          ? (sort.dir==='asc' ? <I.ChevronUp size={12}/> : <I.ChevronDown size={12}/>)
+          : <I.ChevronsUpDown size={12} style={{ opacity:.35 }}/> )}
+      </span>
+    </th>
+  );
+};
+
+function useSort(initialKey) {
+  const [sort, setSort] = useState({ key: initialKey, dir: 'asc' });
+  const apply = (arr, accessors) => {
+    const acc = accessors[sort.key];
+    if (!acc) return arr;
+    const sorted = [...arr].sort((a,b) => {
+      const va = acc(a), vb = acc(b);
+      if (typeof va === 'number' && typeof vb === 'number') return va - vb;
+      return String(va).localeCompare(String(vb));
+    });
+    return sort.dir === 'asc' ? sorted : sorted.reverse();
+  };
+  return { sort, setSort, apply };
+}
+
+/* ============================================================
+   MODAL
+============================================================ */
+const Modal = ({ open, onClose, children, width='max-w-lg' }) => {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 cv-fade" style={{ background:'rgba(20,25,15,0.55)' }} onClick={onClose}>
+      <div className={`bg-white w-full ${width} shadow-2xl cv-scale-in`} style={{ borderTop:`4px solid ${C.gold}` }} onClick={e=>e.stopPropagation()}>
+        {children}
+      </div>
+    </div>
+  );
+};
+
+/* Progress-then-success flow used by tool/report buttons */
+function useTaskModal() {
+  const [state, setState] = useState(null); // {phase:'progress'|'done', title, docs, sub}
+  const timer = useRef(null);
+  const run = (opts) => {
+    setState({ phase:'progress', progress:0, ...opts });
+    let p = 0;
+    clearInterval(timer.current);
+    timer.current = setInterval(() => {
+      p += Math.random()*18 + 8;
+      if (p >= 100) {
+        p = 100;
+        clearInterval(timer.current);
+        setState(s => s ? ({ ...s, progress:100 }) : s);
+        setTimeout(() => setState(s => s ? ({ ...s, phase:'done' }) : s), 400);
+      } else {
+        setState(s => s ? ({ ...s, progress:p }) : s);
+      }
+    }, 220);
+  };
+  const close = () => { clearInterval(timer.current); setState(null); };
+  return { state, run, close };
+}
+
+const TaskModal = ({ task }) => {
+  const s = task.state;
+  return (
+    <Modal open={!!s} onClose={s && s.phase==='done' ? task.close : undefined}>
+      {s && (
+        <div>
+          <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor:'#eceee9' }}>
+            <div className="flex items-center gap-2.5">
+              <span className="flex items-center justify-center w-8 h-8" style={{ background:'#eaf0e4' }}><I.FileText size={18} style={{ color:C.forest }}/></span>
+              <h3 className="font-bold text-[15px]" style={{ color:C.charcoal }}>{s.title}</h3>
+            </div>
+            {s.phase==='done' && <button onClick={task.close}><I.X size={20} style={{ color:C.gray }}/></button>}
+          </div>
+          <div className="px-6 py-7">
+            {s.phase==='progress' ? (
+              <div>
+                <p className="text-sm mb-4" style={{ color:C.gray }}>{s.sub || 'Compiling documentation and supporting schedules…'}</p>
+                <div className="h-2.5 w-full overflow-hidden" style={{ background:C.track }}>
+                  <div className="h-full transition-all duration-200" style={{ width:`${s.progress}%`, background:C.forest }}/>
+                </div>
+                <p className="mt-3 text-xs font-semibold uppercase tracking-wide" style={{ color:C.forest }}>{Math.round(s.progress)}% — {s.progress<40?'Gathering records':s.progress<75?'Assembling package':'Finalizing'}</p>
+              </div>
+            ) : (
+              <div className="cv-fade">
+                <div className="flex flex-col items-center text-center">
+                  <span className="flex items-center justify-center w-16 h-16 mb-3" style={{ background:'#eaf0e4' }}>
+                    <I.CheckCircle size={36} style={{ color:C.forest }}/>
+                  </span>
+                  <h4 className="text-lg font-bold" style={{ color:C.charcoal }}>{s.doneTitle || 'Document Package Ready'}</h4>
+                  <p className="text-sm mt-1.5 mb-1" style={{ color:C.gray }}>{s.doneSub || `${s.docs || 47} documents compiled and validated.`}</p>
+                  {s.doneMeta && <p className="text-xs mb-1" style={{ color:C.gray }}>{s.doneMeta}</p>}
+                </div>
+                <div className="flex gap-3 mt-6">
+                  <Btn color="forest" full icon={I.Download} onClick={()=>{ generateCommandViewPdf({ kind:s.kind, rec:s.rec, list:s.list }); }}>Download Package</Btn>
+                  <Btn color="gold" full icon={I.Share} onClick={task.close}>Share with Team</Btn>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+};
+
+/* ============================================================
+   NAVBAR
+============================================================ */
+const NAV_ITEMS = [
+  { key:'dashboard',   label:'Dashboard' },
+  { key:'contractors', label:'Contractors' },
+  { key:'compliance',  label:'Compliance' },
+  { key:'audit',       label:'Audit Tools' },
+  { key:'reports',     label:'Reports' },
+  { key:'settings',    label:'Settings' },
+];
+
+const Navbar = ({ page, setPage, onBellClick, alerts }) => {
+  const [menu, setMenu] = useState(false);
+  return (
+    <header className="sticky top-0 z-[60]" style={{ background:C.forest, borderBottom:`3px solid ${C.gold}` }}>
+      <div className="max-w-[1500px] mx-auto px-5 h-[64px] flex items-center justify-between gap-4">
+        {/* left: logo */}
+        <button className="flex items-center gap-3 flex-shrink-0" onClick={()=>setPage('dashboard')}>
+          <ShieldLogo size={38}/>
+          <div className="text-left leading-none">
+            <div className="font-extrabold tracking-widest text-[17px]" style={{ color:C.gold }}>COMMANDVIEW</div>
+            <div className="text-[9px] tracking-[0.2em] mt-1" style={{ color:'#d8c489' }}>MISSION VISIBILITY PLATFORM</div>
+          </div>
+        </button>
+
+        {/* center: nav */}
+        <nav className="hidden lg:flex items-center gap-1">
+          {NAV_ITEMS.map(n => (
+            <button key={n.key} onClick={()=>setPage(n.key)}
+              className="px-3.5 py-2 text-[13px] font-semibold tracking-wide transition-colors"
+              style={{ color: page===n.key ? C.gold : '#f0f2ec',
+                       borderBottom: page===n.key ? `2px solid ${C.gold}` : '2px solid transparent' }}>
+              {n.label}
+            </button>
+          ))}
+        </nav>
+
+        {/* right: bell + profile */}
+        <div className="flex items-center gap-4 flex-shrink-0">
+          <button className="relative" onClick={onBellClick} aria-label="Notifications">
+            <I.Bell size={20} style={{ color:'#f0f2ec' }}/>
+            {alerts>0 && <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-[16px] px-1 flex items-center justify-center text-[10px] font-bold text-white rounded-full" style={{ background:C.critical }}>{alerts}</span>}
+          </button>
+          <div className="hidden sm:flex items-center gap-2.5">
+            <div className="text-right leading-tight">
+              <div className="text-[12px] font-semibold text-white">J. Reynolds</div>
+              <div className="text-[10px]" style={{ color:'#cbd6bd' }}>Contracting Officer</div>
+            </div>
+            <div className="w-9 h-9 flex items-center justify-center font-bold text-[13px] rounded-full" style={{ background:C.gold, color:C.forestDark, border:'2px solid #e4c46f' }}>JR</div>
+          </div>
+          <button className="lg:hidden" onClick={()=>setMenu(m=>!m)}><I.Menu size={22} style={{ color:C.gold }}/></button>
+        </div>
+      </div>
+      {/* mobile menu */}
+      {menu && (
+        <div className="lg:hidden px-4 pb-3 grid grid-cols-2 gap-1.5 cv-fade" style={{ background:C.forest }}>
+          {NAV_ITEMS.map(n => (
+            <button key={n.key} onClick={()=>{setPage(n.key); setMenu(false);}}
+              className="px-3 py-2 text-[13px] font-semibold text-left"
+              style={{ color: page===n.key?C.gold:'#f0f2ec', background: page===n.key?'rgba(255,255,255,0.08)':'transparent' }}>
+              {n.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </header>
+  );
+};
+
+/* ============================================================
+   NOTIFICATIONS DROPDOWN
+============================================================ */
+const NotificationPanel = ({ open, onClose, onGoto }) => {
+  if (!open) return null;
+  const items = [
+    { color:'red',   title:'Rejected invoice exceeds resolution threshold', meta:'Apex Defense Solutions · INV-2024-0444 · $445,200' },
+    { color:'red',   title:'HUBZone subcontracting critically behind plan',  meta:'Apex Defense Solutions · 5% vs 12% committed' },
+    { color:'amber', title:'Period of performance expires in 87 days',        meta:'Apex Defense Solutions · No modification on file' },
+  ];
+  return (
+    <>
+      <div className="fixed inset-0 z-[65]" onClick={onClose}/>
+      <div className="fixed right-4 top-[70px] z-[70] w-[360px] bg-white shadow-2xl cv-scale-in" style={{ borderTop:`3px solid ${C.gold}`, border:'1px solid #e3e6df' }}>
+        <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor:'#eceee9' }}>
+          <span className="font-bold text-[13px] uppercase tracking-wide" style={{ color:C.charcoal }}>Alerts · 3 Active</span>
+          <button onClick={onClose}><I.X size={16} style={{ color:C.gray }}/></button>
+        </div>
+        <div>
+          {items.map((it,i)=>(
+            <button key={i} onClick={()=>{ onClose(); onGoto('dashboard'); }}
+              className="w-full text-left px-4 py-3 border-b hover:bg-black/[0.02] flex gap-3" style={{ borderColor:'#f1f2ee' }}>
+              <span className="mt-1"><Dot color={it.color}/></span>
+              <span>
+                <span className="block text-[13px] font-semibold" style={{ color:C.charcoal }}>{it.title}</span>
+                <span className="block text-[11px] mt-0.5" style={{ color:C.gray }}>{it.meta}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+        <button onClick={()=>{ onClose(); onGoto('dashboard'); }} className="w-full py-2.5 text-[12px] font-semibold uppercase tracking-wide" style={{ color:C.forest }}>View All On Dashboard</button>
+      </div>
+    </>
+  );
+};
+
+/* ============================================================
+   LOGIN SCREEN
+============================================================ */
+const Login = ({ onLogin }) => {
+  const [id, setId] = useState('');
+  const [pw, setPw] = useState('');
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center px-4 py-10" style={{ background:'linear-gradient(180deg,#ffffff 0%,#f1f3ee 100%)' }}>
+      <div className="flex flex-col items-center mb-8 cv-fade">
+        <img
+          src="commandview-logo.png"
+          alt="CommandView — Mission Visibility Platform"
+          style={{ width: 320, maxWidth: '82vw', height: 'auto' }}
+        />
+        <p className="mt-4 text-[11px] font-semibold tracking-wide" style={{ color:C.gray }}>Secure Application Portal · app.commandview.com</p>
+      </div>
+
+      <form className="w-full max-w-[400px] bg-white shadow-card p-8 cv-scale-in" style={{ border:`1px solid ${C.gold}`, borderTop:`3px solid ${C.gold}` }}
+            onSubmit={(e)=>{ e.preventDefault(); onLogin(); }}>
+        <label className="block text-[11px] font-bold uppercase tracking-wide mb-1.5" style={{ color:'#4b5443' }}>CAC ID or Username</label>
+        <div className="flex items-center border mb-4 px-3" style={{ borderColor:'#d7dbd1' }}>
+          <I.User size={16} style={{ color:C.gray }}/>
+          <input value={id} onChange={e=>setId(e.target.value)} placeholder="j.reynolds"
+                 className="w-full px-2.5 py-2.5 text-sm outline-none" />
+        </div>
+        <label className="block text-[11px] font-bold uppercase tracking-wide mb-1.5" style={{ color:'#4b5443' }}>Password or PIN</label>
+        <div className="flex items-center border mb-6 px-3" style={{ borderColor:'#d7dbd1' }}>
+          <I.Lock size={16} style={{ color:C.gray }}/>
+          <input type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="••••••••"
+                 className="w-full px-2.5 py-2.5 text-sm outline-none" />
+        </div>
+        <Btn color="forest" full size="lg" type="solid">Access CommandView</Btn>
+        <div className="flex items-center justify-center gap-1.5 mt-4">
+          <I.Lock size={12} style={{ color:C.gray }}/>
+          <p className="text-[11px]" style={{ color:C.gray }}>Secure Government Access — CAC Authentication Supported</p>
+        </div>
+      </form>
+
+      <div className="mt-8 flex flex-col items-center gap-1.5">
+        <a href="https://commandview.com" className="text-[11px] font-semibold tracking-wide inline-flex items-center gap-1" style={{ color:C.forest }}>
+          <I.Link size={12}/> Return to CommandView.com
+        </a>
+        <p className="text-[11px]" style={{ color:C.gray }}>
+          Powered by <a href="https://cosbyaisolutions.com" className="font-semibold" style={{ color:C.forest }}>Cosby AI Solutions</a>
+        </p>
+      </div>
+    </div>
+  );
+};
+
+/* ============================================================
+   SUMMARY METRIC CARDS (Row 1)
+============================================================ */
+const MetricCard = ({ topColor, value, label, sub, pill, pillColor, trend }) => (
+  <div className="bg-white shadow-card p-5 flex flex-col" style={{ border:'0.5px solid #e3e6df', borderTop:`3px solid ${statusColor(topColor)}` }}>
+    <div className="flex items-start justify-between">
+      <span className="text-[11px] font-bold uppercase tracking-wide leading-tight" style={{ color:'#4b5443' }}>{label}</span>
+      <Pill color={pillColor} small>{pill}</Pill>
+    </div>
+    <div className="flex items-end gap-2 mt-3">
+      <span className="text-[40px] font-extrabold leading-none" style={{ color:C.charcoal }}>{value}</span>
+      {trend==='down' && <I.TrendDown size={22} style={{ color:C.critical, marginBottom:6 }}/>}
+      {trend==='up' && <I.TrendUp size={22} style={{ color:C.forest, marginBottom:6 }}/>}
+    </div>
+    <span className="text-[12px] mt-2" style={{ color:C.gray }}>{sub}</span>
+  </div>
+);
+
+const SummaryCards = ({ d }) => (
+  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+    <MetricCard topColor={d.healthStatus} value={d.healthScore} label="Contractor Health Score"
+      sub="Out of 100" pill={d.healthPill} pillColor={d.healthStatus} trend={d.healthScore<70?'down':d.healthScore>88?'up':undefined}/>
+    <MetricCard topColor="green" value={(d.contracts||[]).length} label="Active Contracts Monitored"
+      sub="Active Contract Vehicles" pill="ACTIVE" pillColor="green"/>
+    <MetricCard topColor={d.flagsColor} value={d.activeFlags} label="Open Risk Flags"
+      sub={d.activeFlags>0?'Require Immediate Attention':'No open flags'} pill={d.activeFlags>=3?'CRITICAL':d.activeFlags>0?'REVIEW':'CLEAR'} pillColor={d.activeFlags>=3?'red':d.activeFlags>0?'amber':'green'}/>
+    <MetricCard topColor={d.daysColor} value={d.daysToPop} label="Days Until Period of Performance End"
+      sub="No Modification On File" pill={d.daysToPop<45?'CRITICAL':d.daysToPop<120?'WARNING':'ON TRACK'} pillColor={d.daysColor}/>
+  </div>
+);
+
+/* ============================================================
+   WAWF INVOICE PANEL
+============================================================ */
+const WawfPanel = ({ d }) => {
+  const { sort, setSort, apply } = useSort('date');
+  const rows = apply(d.invoices, {
+    num: r=>r.num, amount: r=>r.amount, date: r=>r.date, status: r=>r.status,
+  });
+  const t = d.invoiceTotals;
+  return (
+    <Panel title="WAWF Invoice Monitoring" tag={<SourceTag label="Live Feed" live/>}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="border-b" style={{ borderColor:'#eceee9', background:'#fafbf8' }}>
+              <Th label="Invoice #" sortKey="num" sort={sort} setSort={setSort}/>
+              <Th label="Amount" sortKey="amount" sort={sort} setSort={setSort} align="right"/>
+              <Th label="Submitted" sortKey="date" sort={sort} setSort={setSort}/>
+              <Th label="Status" sortKey="status" sort={sort} setSort={setSort}/>
+              <Th label="Action" align="right"/>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r,i)=>(
+              <tr key={i} className="border-b hover:bg-black/[0.015]" style={{ borderColor:'#f2f3ef' }}>
+                <td className="px-3 py-2.5 font-mono text-[12px]" style={{ color:C.charcoal }}>{r.num}</td>
+                <td className="px-3 py-2.5 text-right font-semibold" style={{ color:C.charcoal }}>{fmtMoney(r.amount)}</td>
+                <td className="px-3 py-2.5" style={{ color:C.gray }}>{r.date}</td>
+                <td className="px-3 py-2.5">
+                  <span className="inline-flex items-center gap-1.5">
+                    {r.flag && <I.Flag size={13} style={{ color:C.critical }}/>}
+                    <Pill color={r.color} small>{r.status}</Pill>
+                  </span>
+                </td>
+                <td className="px-3 py-2.5 text-right">
+                  <button className="text-[12px] font-semibold hover:underline" style={{ color: r.color==='red'?C.critical:C.forest }}>{r.action}</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t" style={{ borderColor:'#eceee9' }}>
+        <TotalStat label="Total Invoiced" value={money0(t.invoiced)}/>
+        <TotalStat label="Accepted" value={money0(t.accepted)} color={C.forest}/>
+        <TotalStat label="Pending" value={money0(t.pending)} color={C.goldDark}/>
+        <TotalStat label="Rejected" value={money0(t.rejected)} color={C.critical} bold/>
+      </div>
+    </Panel>
+  );
+};
+const TotalStat = ({ label, value, color, bold }) => (
+  <div>
+    <div className="text-[10px] font-bold uppercase tracking-wide" style={{ color:'#7a8270' }}>{label}</div>
+    <div className={`mt-0.5 ${bold?'font-extrabold':'font-semibold'} text-[15px]`} style={{ color: color||C.charcoal }}>{value}</div>
+  </div>
+);
+
+/* ============================================================
+   eSRS SUBCONTRACTING PANEL
+============================================================ */
+const EsrsPanel = ({ d }) => (
+  <Panel title="Small Business Subcontracting Plan Compliance" tag={<SourceTag label="eSRS Live Feed" live/>}>
+    <div className="space-y-3">
+      {d.esrs.map((e,i)=>{
+        const col = statusColor(e.status);
+        return (
+          <div key={i}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[12px] font-semibold" style={{ color:C.charcoal }}>{e.cat}</span>
+              <span className="text-[11px]" style={{ color:C.gray }}>
+                <span className="font-bold" style={{ color:col }}>{e.actual}%</span> / {e.committed}% committed
+              </span>
+            </div>
+            <div className="relative h-5" style={{ background:C.track }}>
+              {/* committed marker */}
+              <div className="absolute top-0 bottom-0 w-[2px]" style={{ left:`${e.committed}%`, background:'#7a8270' }} title={`Committed ${e.committed}%`}/>
+              {/* actual fill */}
+              <div className="h-full flex items-center transition-all" style={{ width:`${e.actual}%`, background:col }}>
+                <span className="ml-2 text-[10px] font-bold text-white whitespace-nowrap" style={{ opacity: e.actual>14?1:0 }}>{e.note}</span>
+              </div>
+              {e.actual<=14 && <span className="absolute top-0 bottom-0 flex items-center text-[10px] font-semibold" style={{ left:`calc(${e.actual}% + 6px)`, color:col }}>{e.note}</span>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+    <div className="mt-4 flex gap-2.5 p-3" style={{ background:'#faf3df', border:'1px solid #ecdcaf' }}>
+      <I.AlertTriangle size={18} style={{ color:C.goldDark, flexShrink:0, marginTop:1 }}/>
+      <p className="text-[12px] leading-relaxed" style={{ color:'#6b5a1f' }}>{d.esrsWarning}</p>
+    </div>
+    <div className="flex items-center gap-4 mt-3 text-[10px]" style={{ color:C.gray }}>
+      <span className="inline-flex items-center gap-1.5"><span className="inline-block w-3 h-[2px]" style={{ background:'#7a8270' }}/>Committed target</span>
+      <span className="inline-flex items-center gap-1.5"><span className="inline-block w-3 h-3" style={{ background:C.forest }}/>Actual participation</span>
+    </div>
+  </Panel>
+);
+
+/* ============================================================
+   CPARS PANEL
+============================================================ */
+const CparsPanel = ({ d }) => {
+  const c = d.cpars;
+  return (
+    <Panel title="Contractor Performance Assessment" tag={<SourceTag label="CPARS Feed"/>}>
+      <div className="flex flex-col items-start">
+        <span className="text-[10px] font-bold uppercase tracking-wide mb-1.5" style={{ color:'#7a8270' }}>Overall Rating</span>
+        <span className="px-4 py-2 text-lg font-extrabold uppercase tracking-wide"
+              style={{ color:'#fff', background:statusColor(c.overallColor) }}>{c.overall}</span>
+        <span className="inline-flex items-center gap-1.5 mt-2 text-[12px] font-semibold" style={{ color: c.trend==='up'?C.forest:c.trend==='down'?C.critical:C.gray }}>
+          {c.trend==='up'?<I.TrendUp size={15}/>:c.trend==='down'?<I.TrendDown size={15}/>:null}
+          {c.trendLabel}
+        </span>
+      </div>
+      <div className="mt-4 space-y-2 pt-3 border-t" style={{ borderColor:'#eceee9' }}>
+        {c.categories.map((cat,i)=>(
+          <div key={i} className="flex items-center justify-between">
+            <span className="inline-flex items-center gap-2 text-[13px]" style={{ color:C.charcoal }}><Dot color={cat.color}/>{cat.label}</span>
+            <span className="text-[12px] font-semibold" style={{ color: statusColor(cat.color) }}>{cat.rating}</span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 pt-3 border-t grid grid-cols-2 gap-3 text-[12px]" style={{ borderColor:'#eceee9' }}>
+        <div><span className="block text-[10px] font-bold uppercase" style={{ color:'#7a8270' }}>Previous Period</span><span className="font-semibold" style={{ color:C.charcoal }}>{c.prev}</span></div>
+        <div><span className="block text-[10px] font-bold uppercase" style={{ color:'#7a8270' }}>Two Periods Ago</span><span className="font-semibold" style={{ color:C.charcoal }}>{c.prev2}</span></div>
+      </div>
+      <p className="mt-3 text-[12px] font-semibold" style={{ color:C.goldDark }}>{c.note}</p>
+    </Panel>
+  );
+};
+
+/* ============================================================
+   SDW BURN PANEL
+============================================================ */
+const BurnPanel = ({ d }) => {
+  const b = d.burn;
+  return (
+    <Panel title="Contract Obligation and Burn Rate" tag={<SourceTag label="SDW Feed"/>}>
+      <div className="flex items-baseline justify-between mb-2">
+        <span className="text-[14px] font-semibold" style={{ color:C.charcoal }}>{abbrMoney(b.obligated)} Obligated <span style={{ color:C.gray }}>of {abbrMoney(b.total)} Total Contract Value</span></span>
+        <span className="text-[15px] font-extrabold" style={{ color:C.forest }}>{b.pct}%</span>
+      </div>
+      <div className="h-4 w-full overflow-hidden" style={{ background:C.track }}>
+        <div className="h-full transition-all" style={{ width:`${b.pct}%`, background:C.forest }}/>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-[12px]">
+        <MiniStat label="Burn Rate" value={`${b.pct}%`}/>
+        <MiniStat label="Monthly Burn" value={money0(b.monthlyAvg)}/>
+        <MiniStat label="Funds Exhausted" value={b.projected}/>
+        <MiniStat label="POP End" value={d.id==='apex'?'September 2026':'per schedule'}/>
+      </div>
+      <div className="mt-4 flex gap-2.5 p-3" style={{ background:'#faf3df', border:'1px solid #ecdcaf' }}>
+        <I.AlertTriangle size={18} style={{ color:C.goldDark, flexShrink:0, marginTop:1 }}/>
+        <p className="text-[12px] leading-relaxed" style={{ color:'#6b5a1f' }}>{b.gapNote}</p>
+      </div>
+      <div className="mt-4">
+        <div className="text-[10px] font-bold uppercase tracking-wide mb-1" style={{ color:'#7a8270' }}>Monthly Obligation Burn — Last 6 Months (2026)</div>
+        <AutoWidth height={150}>
+          {(w)=>(
+            <BarChart width={w} height={150} data={b.monthly} margin={{ top:8, right:8, left:-18, bottom:0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#eceee9" vertical={false}/>
+              <XAxis dataKey="m" tick={{ fontSize:11, fill:'#7a8270' }} axisLine={{ stroke:'#d7dbd1' }} tickLine={false}/>
+              <YAxis tick={{ fontSize:10, fill:'#7a8270' }} tickFormatter={v=>`$${Math.round(v/1000)}k`} axisLine={false} tickLine={false}/>
+              <Tooltip formatter={(v)=>[money0(v),'Obligated']} contentStyle={{ fontSize:12, border:'1px solid #d7dbd1' }} cursor={{ fill:'rgba(45,80,22,0.06)' }}/>
+              <Bar dataKey="v" isAnimationActive={false} radius={[0,0,0,0]}>
+                {b.monthly.map((m,i)=><Cell key={i} fill={m.hot?C.gold:C.forest}/>)}
+              </Bar>
+            </BarChart>
+          )}
+        </AutoWidth>
+      </div>
+    </Panel>
+  );
+};
+const MiniStat = ({ label, value }) => (
+  <div>
+    <div className="text-[10px] font-bold uppercase tracking-wide" style={{ color:'#7a8270' }}>{label}</div>
+    <div className="font-semibold text-[13px] mt-0.5" style={{ color:C.charcoal }}>{value}</div>
+  </div>
+);
+
+/* ============================================================
+   RISK FLAGS PANEL
+============================================================ */
+const RiskPanel = ({ d, onAction }) => (
+  <Panel title="Risk Flags and Recommended Actions" tag={<SourceTag label={`${d.flags.length} Active`}/>}>
+    {d.flags.length===0 ? (
+      <div className="flex flex-col items-center justify-center py-10 text-center">
+        <I.CheckCircle size={40} style={{ color:C.forest }}/>
+        <p className="mt-3 font-semibold" style={{ color:C.charcoal }}>No open risk flags</p>
+        <p className="text-[12px]" style={{ color:C.gray }}>This contractor is tracking within all monitored thresholds.</p>
+      </div>
+    ) : (
+      <div className="space-y-3">
+        {d.flags.map((f,i)=>{
+          const col = statusColor(f.color);
+          return (
+            <div key={i} className="p-4" style={{ borderLeft:`4px solid ${col}`, background:'#fbfbfa', border:'1px solid #eceee9', borderLeftWidth:4 }}>
+              <div className="flex items-center justify-between mb-1.5">
+                <Pill color={f.color} small>{f.sev}</Pill>
+                <span className="font-mono text-[11px]" style={{ color:C.gray }}>{f.ref}</span>
+              </div>
+              <h4 className="font-bold text-[13px] mb-1" style={{ color:C.charcoal }}>{f.title}</h4>
+              <p className="text-[12px] leading-relaxed mb-3" style={{ color:'#5a6152' }}>{f.desc}</p>
+              <Btn color={f.color==='red'?'red':'amber'} size="sm" onClick={()=>onAction(f)}>{f.action}</Btn>
+            </div>
+          );
+        })}
+      </div>
+    )}
+  </Panel>
+);
+
+/* ============================================================
+   DCAA AUDIT READINESS PANEL
+============================================================ */
+const gaugeIcon = (state) => state==='green'
+  ? <I.Check size={15} style={{ color:C.forest }}/>
+  : state==='red' ? <I.XCircle size={15} style={{ color:C.critical }}/>
+  : <I.AlertTriangle size={14} style={{ color:C.goldDark }}/>;
+
+const AuditReadinessPanel = ({ d, onGenerate }) => {
+  const a = d.audit;
+  const gaugeColor = a.score>=80?C.forest:a.score>=60?C.gold:C.critical;
+  const data = [{ name:'score', value:a.score, fill:gaugeColor }];
+  const col1 = a.items.slice(0,5), col2 = a.items.slice(5);
+  return (
+    <Panel title="DCAA Audit Readiness Score" tag={<SourceTag label="DCAA"/>}>
+      <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-6 items-center">
+        <div className="flex flex-col items-center">
+          <div style={{ width:200, height:200, position:'relative' }}>
+            <RadialBarChart width={200} height={200} innerRadius="72%" outerRadius="100%" data={data} startAngle={90} endAngle={-270}>
+              <PolarAngleAxis type="number" domain={[0,100]} tick={false}/>
+              <RadialBar background={{ fill:'#eceae2' }} dataKey="value" cornerRadius={0} clockWise isAnimationActive={false}/>
+            </RadialBarChart>
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <span className="text-[44px] font-extrabold leading-none" style={{ color:gaugeColor }}>{a.score}</span>
+              <span className="text-[12px]" style={{ color:C.gray }}>out of 100</span>
+            </div>
+          </div>
+          <span className="mt-1 text-[12px] font-bold uppercase tracking-wide" style={{ color:'#4b5443' }}>Audit Readiness Score</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+          {[col1,col2].map((col,ci)=>(
+            <div key={ci} className="space-y-2">
+              {col.map((it,i)=>(
+                <div key={i} className="flex items-start gap-2">
+                  <span className="mt-0.5">{gaugeIcon(it.state)}</span>
+                  <span className="text-[12.5px] leading-tight" style={{ color:C.charcoal }}>
+                    {it.label}
+                    {it.note && <span className="font-semibold" style={{ color: it.state==='red'?C.critical:C.goldDark }}> — {it.note}</span>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="mt-5 pt-4 border-t" style={{ borderColor:'#eceee9' }}>
+        <Btn color="gold" icon={I.FileText} onClick={onGenerate}>Generate DCAA Audit Package</Btn>
+      </div>
+    </Panel>
+  );
+};
+
+/* ============================================================
+   REGULATORY COMPLIANCE PANEL
+============================================================ */
+const RegulatoryPanel = ({ d, onReport }) => (
+  <Panel title="Regulatory Compliance and FAR Monitoring" tag={<SourceTag label="FAR Overhaul Monitor" live/>}>
+    <div className="overflow-x-auto">
+      <table className="w-full text-[13px]">
+        <thead>
+          <tr className="border-b" style={{ borderColor:'#eceee9', background:'#fafbf8' }}>
+            <th className="px-3 py-2.5 text-left text-[11px] font-bold uppercase tracking-wide" style={{ color:'#4b5443' }}>Regulation</th>
+            <th className="px-3 py-2.5 text-left text-[11px] font-bold uppercase tracking-wide" style={{ color:'#4b5443' }}>Legacy FAR Status</th>
+            <th className="px-3 py-2.5 text-left text-[11px] font-bold uppercase tracking-wide" style={{ color:'#4b5443' }}>FAR Overhaul Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {d.regulatory.map((r,i)=>(
+            <tr key={i} className="border-b" style={{ borderColor:'#f2f3ef' }}>
+              <td className="px-3 py-3">
+                <div className="font-mono text-[12px] font-semibold" style={{ color:C.charcoal }}>{r.reg}</div>
+                <div className="text-[11px]" style={{ color:C.gray }}>{r.name}</div>
+              </td>
+              <td className="px-3 py-3"><span className="inline-flex items-center gap-2"><Dot color={r.legacyColor}/><span className="text-[12px] font-semibold" style={{ color:statusColor(r.legacyColor) }}>{r.legacy}</span></span></td>
+              <td className="px-3 py-3"><span className="inline-flex items-center gap-2"><Dot color={r.overhaulColor}/><span className="text-[12px] font-semibold" style={{ color:statusColor(r.overhaulColor) }}>{r.overhaul}</span></span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <div className="mt-4 flex gap-2.5 p-3" style={{ background:'#faf3df', border:'1px solid #ecdcaf' }}>
+      <I.AlertTriangle size={18} style={{ color:C.goldDark, flexShrink:0, marginTop:1 }}/>
+      <p className="text-[12px] leading-relaxed" style={{ color:'#6b5a1f' }}>{d.regulatoryNote}</p>
+    </div>
+    <div className="mt-4"><Btn color="gold" icon={I.FileText} onClick={onReport}>View Full Regulatory Report</Btn></div>
+  </Panel>
+);
+
+/* ============================================================
+   AUDIT TOOLS SECTION (Row 5)
+============================================================ */
+const AUDIT_TOOLS = [
+  { icon:I.Clipboard, title:'Incurred Cost Audit Package', kind:'tool:incurred', desc:'Compile all required documentation for DCAA incurred cost submission including timesheets, invoices, indirect rate calculations, and supporting schedules.', btn:'Generate Package', docs:47 },
+  { icon:I.BarChart, title:'Forward Pricing Rate Agreement Support', kind:'tool:fpra', desc:'Pull all current and historical rate data, labor categories, and overhead calculations into a single FPRA support package.', btn:'Build FPRA Package', docs:31 },
+  { icon:I.Shield, title:'DCMA Contractor Surveillance Report', kind:'tool:surveillance', desc:'Generate a complete contractor surveillance report including performance ratings, subcontracting compliance, invoice history, and risk summary.', btn:'Generate Surveillance Report', docs:52 },
+  { icon:I.Flag, title:'Cure Notice Documentation', kind:'tool:cure', desc:'Compile all supporting evidence for a cure notice including CPARS data, compliance gaps, invoice rejections, and risk timeline.', btn:'Prepare Cure Notice Package', docs:28 },
+];
+
+const AuditToolsSection = ({ onRun, rec }) => (
+  <Panel title="Audit Preparation and Document Generation" tag={<SourceTag label="DCAA / DCMA"/>}>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {AUDIT_TOOLS.map((t,i)=>(
+        <div key={i} className="bg-white p-5 flex flex-col" style={{ border:'1px solid #e3e6df', borderTop:`3px solid ${C.forest}` }}>
+          <div className="flex items-center gap-3 mb-2">
+            <span className="flex items-center justify-center w-10 h-10" style={{ background:'#faf3df' }}><t.icon size={20} style={{ color:C.goldDark }}/></span>
+            <h4 className="font-bold text-[14px]" style={{ color:C.charcoal }}>{t.title}</h4>
+          </div>
+          <p className="text-[12px] leading-relaxed flex-1 mb-4" style={{ color:'#5a6152' }}>{t.desc}</p>
+          <Btn color="forest" size="sm" icon={I.FileText}
+            onClick={()=>onRun({ kind:t.kind, rec, title:t.title, docs:t.docs, doneTitle:'Document Package Ready', doneSub:`${t.docs} documents compiled from ${rec ? rec.shortName : 'contractor'} records.`, doneMeta:'Ready for DCAA / DCMA submission.' })}>
+            {t.btn}
+          </Btn>
+        </div>
+      ))}
+    </div>
+  </Panel>
+);
+
+/* ============================================================
+   PORTFOLIO TABLE (Row 6)
+============================================================ */
+const PortfolioTable = ({ onSelect, activeId, compact }) => {
+  useCvVersion();
+  const { sort, setSort, apply } = useSort('health');
+  const [q, setQ] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
+  const [fHealth, setFHealth] = useState('all');
+  const [fFlags, setFFlags] = useState('all');
+  const [fCpars, setFCpars] = useState('all');
+  const [fSub, setFSub] = useState('all');
+
+  const allRows = liveRows();
+  const filtered = allRows.filter(r => {
+    if (q && !(r.name.toLowerCase().includes(q.toLowerCase()) || r.cage.toLowerCase().includes(q.toLowerCase()) )) return false;
+    if (fHealth==='high' && r.health<80) return false;
+    if (fHealth==='mid' && !(r.health>=55 && r.health<80)) return false;
+    if (fHealth==='low' && r.health>=55) return false;
+    if (fFlags==='none' && r.flags!==0) return false;
+    if (fFlags==='some' && !(r.flags>=1 && r.flags<=2)) return false;
+    if (fFlags==='many' && r.flags<3) return false;
+    if (fCpars!=='all' && r.cpars!==fCpars) return false;
+    if (fSub!=='all' && r.sub!==fSub) return false;
+    return true;
+  });
+
+  const rows = apply(filtered, {
+    name:r=>r.name, cage:r=>r.cage, value:r=>r.value, health:r=>r.health,
+    flags:r=>r.flags, cpars:r=>r.cpars, sub:r=>r.sub, days:r=>r.days,
+  });
+
+  const Select = ({ value, onChange, children, label }) => (
+    <label className="flex flex-col gap-1">
+      <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color:'#7a8270' }}>{label}</span>
+      <select value={value} onChange={e=>onChange(e.target.value)}
+        className="text-[12px] px-2.5 py-2 bg-white outline-none" style={{ border:'1px solid #d7dbd1', color:C.charcoal }}>
+        {children}
+      </select>
+    </label>
+  );
+
+  return (
+    <Panel title="AMC Contractor Portfolio — Health Overview"
+      tag={<SourceTag label={`${rows.length} of ${allRows.length}`}/>}
+      right={<Btn size="sm" color="forest" icon={I.Users} onClick={()=>setShowAdd(true)}>Add Contractor</Btn>}>
+      {/* filters */}
+      <div className="flex flex-wrap items-end gap-3 mb-4 pb-4 border-b" style={{ borderColor:'#eceee9' }}>
+        <label className="flex flex-col gap-1 flex-1 min-w-[220px]">
+          <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color:'#7a8270' }}>Search</span>
+          <span className="flex items-center border px-2.5" style={{ borderColor:'#d7dbd1' }}>
+            <I.Search size={14} style={{ color:C.gray }}/>
+            <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Contractor name or CAGE code"
+              className="w-full px-2 py-2 text-[12px] outline-none"/>
+          </span>
+        </label>
+        <Select label="Health Score" value={fHealth} onChange={setFHealth}>
+          <option value="all">All</option>
+          <option value="high">80–100 (Healthy)</option>
+          <option value="mid">55–79 (At Risk)</option>
+          <option value="low">Below 55 (Critical)</option>
+        </Select>
+        <Select label="Active Flags" value={fFlags} onChange={setFFlags}>
+          <option value="all">All</option>
+          <option value="none">0 flags</option>
+          <option value="some">1–2 flags</option>
+          <option value="many">3+ flags</option>
+        </Select>
+        <Select label="CPARS Rating" value={fCpars} onChange={setFCpars}>
+          <option value="all">All</option>
+          <option>Outstanding</option><option>Very Good</option><option>Satisfactory</option>
+          <option>Marginal</option><option>Unsatisfactory</option>
+        </Select>
+        <Select label="Subcontracting" value={fSub} onChange={setFSub}>
+          <option value="all">All</option>
+          <option>On Track</option><option>At Risk</option><option>Critical</option>
+        </Select>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="border-b" style={{ borderColor:'#eceee9', background:'#fafbf8' }}>
+              <Th label="Contractor" sortKey="name" sort={sort} setSort={setSort}/>
+              <Th label="CAGE" sortKey="cage" sort={sort} setSort={setSort}/>
+              <Th label="Value" sortKey="value" sort={sort} setSort={setSort} align="right"/>
+              <Th label="Health" sortKey="health" sort={sort} setSort={setSort} align="right"/>
+              <Th label="Flags" sortKey="flags" sort={sort} setSort={setSort} align="center"/>
+              <Th label="CPARS" sortKey="cpars" sort={sort} setSort={setSort}/>
+              <Th label="Subcontracting" sortKey="sub" sort={sort} setSort={setSort}/>
+              <Th label="Days to POP" sortKey="days" sort={sort} setSort={setSort} align="right"/>
+              <Th label="Action" align="right"/>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r)=>(
+              <tr key={r.id} onClick={()=>onSelect(r.id)}
+                  className="border-b cursor-pointer transition-colors"
+                  style={{ borderColor:'#f2f3ef', background: activeId===r.id ? '#eef3e8' : 'transparent' }}
+                  onMouseEnter={e=>{ if(activeId!==r.id) e.currentTarget.style.background='#fafbf8'; }}
+                  onMouseLeave={e=>{ if(activeId!==r.id) e.currentTarget.style.background='transparent'; }}>
+                <td className="px-3 py-3 font-semibold" style={{ color:C.charcoal }}>
+                  {activeId===r.id && <span className="inline-block w-1 h-4 mr-2 align-middle" style={{ background:C.gold }}/>}
+                  {r.name}
+                  <span className="block text-[10px] font-normal" style={{ color:C.gray }}>{r.accCenter}</span>
+                </td>
+                <td className="px-3 py-3 font-mono text-[12px]" style={{ color:C.gray }}>{r.cage}</td>
+                <td className="px-3 py-3 text-right font-semibold" style={{ color:C.charcoal }}>{r.valueLabel}</td>
+                <td className="px-3 py-3 text-right"><span className="font-extrabold text-[15px]" style={{ color:statusColor(r.healthColor) }}>{r.health}</span></td>
+                <td className="px-3 py-3 text-center">
+                  {r.flags>0
+                    ? <span className="inline-flex items-center justify-center min-w-[22px] h-[22px] px-1.5 text-[12px] font-bold text-white" style={{ background:statusColor(r.flagsColor) }}>{r.flags}</span>
+                    : <span className="text-[12px]" style={{ color:C.forest }}>—</span>}
+                </td>
+                <td className="px-3 py-3 text-[12px]" style={{ color:C.charcoal }}>{r.cpars}</td>
+                <td className="px-3 py-3"><Pill color={r.subColor} small>{r.sub}</Pill></td>
+                <td className="px-3 py-3 text-right font-semibold" style={{ color: r.days<45?C.critical:r.days<120?C.goldDark:C.charcoal }}>{r.days}</td>
+                <td className="px-3 py-3 text-right"><button onClick={(e)=>{e.stopPropagation(); onSelect(r.id);}} className="text-[12px] font-semibold hover:underline" style={{ color:C.forest }}>View</button></td>
+              </tr>
+            ))}
+            {rows.length===0 && <tr><td colSpan={9} className="px-3 py-10 text-center text-[13px]" style={{ color:C.gray }}>No contractors match the current filters.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      <AddContractorModal open={showAdd} onClose={()=>setShowAdd(false)} onCreated={(id)=>{ setShowAdd(false); onSelect(id); }}/>
+    </Panel>
+  );
+};
+
+/* ============================================================
+   PAGE HEADER + SEARCH
+============================================================ */
+const PageHeader = ({ title, subtitle, children }) => (
+  <div className="bg-white border-b" style={{ borderColor:'#e3e6df' }}>
+    <div className="max-w-[1500px] mx-auto px-5 py-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+      <div>
+        <h1 className="text-[22px] font-extrabold" style={{ color:C.charcoal }}>{title}</h1>
+        {subtitle && <p className="text-[13px] mt-0.5" style={{ color:C.gray }}>{subtitle}</p>}
+      </div>
+      {children}
+    </div>
+  </div>
+);
+
+const ContractorSearch = ({ onSearch }) => {
+  const [q, setQ] = useState('');
+  const submit = () => {
+    const term = q.trim().toLowerCase();
+    if (!term) return;
+    const hit = liveRows().find(r =>
+      r.name.toLowerCase().includes(term) || r.cage.toLowerCase()===term ||
+      (CONTRACTORS[r.id].contractNumber||'').toLowerCase().includes(term));
+    if (hit) onSearch(hit.id);
+    else onSearch(null, term);
+  };
+  return (
+    <div className="flex items-stretch w-full lg:w-[520px]">
+      <span className="flex items-center border border-r-0 px-3 bg-white flex-1" style={{ borderColor:'#d7dbd1' }}>
+        <I.Search size={16} style={{ color:C.gray }}/>
+        <input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submit()}
+          placeholder="Search by contractor name, CAGE code, or contract number"
+          className="w-full px-2.5 py-2.5 text-[13px] outline-none"/>
+      </span>
+      <Btn color="forest" onClick={submit} icon={I.Search}>Search</Btn>
+    </div>
+  );
+};
+
+/* Contract meta strip under header when a contractor is selected */
+const ContractStrip = ({ d }) => (
+  <div className="bg-white border-b" style={{ borderColor:'#e3e6df' }}>
+    <div className="max-w-[1500px] mx-auto px-5 py-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+      <div className="flex items-center gap-2.5">
+        <span className="flex items-center justify-center w-9 h-9" style={{ background:'#eaf0e4' }}><I.Shield size={18} style={{ color:C.forest }}/></span>
+        <div>
+          <div className="font-bold text-[15px]" style={{ color:C.charcoal }}>{d.name}</div>
+          <div className="text-[11px]" style={{ color:C.gray }}>CAGE {d.cage} · {d.contractNumber} · {d.accCenter}</div>
+        </div>
+      </div>
+      <div className="h-8 w-px hidden sm:block" style={{ background:'#e3e6df' }}/>
+      <MetaItem label="Contract Value" value={d.valueLabel}/>
+      <MetaItem label="Type" value={d.contractType}/>
+      <MetaItem label="Period of Performance" value={d.id==='apex'?`${d.popStart} – ${d.popEnd}`:'Active'}/>
+      <MetaItem label="Contracting Officer" value={d.co}/>
+    </div>
+  </div>
+);
+const MetaItem = ({ label, value }) => (
+  <div>
+    <div className="text-[10px] font-bold uppercase tracking-wide" style={{ color:'#7a8270' }}>{label}</div>
+    <div className="text-[12.5px] font-semibold" style={{ color:C.charcoal }}>{value}</div>
+  </div>
+);
+
+/* ============================================================
+   ADD CONTRACTOR / ADD CONTRACT (live CRUD)
+============================================================ */
+const F_INPUT = "w-full px-3 py-2 text-[13px] bg-white outline-none";
+const F_BORDER = { border:'1px solid #d7dbd1' };
+const clampNum = (v, min, max) => Math.max(min, Math.min(max, Number(v) || 0));
+const FField = ({ label, children }) => (
+  <label className="flex flex-col gap-1">
+    <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color:'#7a8270' }}>{label}</span>
+    {children}
+  </label>
+);
+const FSelect = ({ value, onChange, options }) => (
+  <select className={F_INPUT} style={F_BORDER} value={value} onChange={e=>onChange(e.target.value)}>
+    {options.map(o => <option key={o} value={o}>{o}</option>)}
+  </select>
+);
+
+const AddContractorModal = ({ open, onClose, onCreated }) => {
+  const init = { name:'', cage:'', contractNumber:'', value:5000000, accCenter:'ACC-APG', contractType:'Cost Plus Fixed Fee', cpars:'Satisfactory', health:75, flags:0, sub:'On Track', days:180 };
+  const [f, setF] = useState(init);
+  useEffect(() => { if (open) setF(init); }, [open]);
+  const set = (k, v) => setF(s => ({ ...s, [k]: v }));
+  const submit = () => {
+    if (!f.name.trim() || !f.cage.trim()) { alert('Contractor name and CAGE code are required.'); return; }
+    const id = addContractor({
+      ...f, name: f.name.trim(), cage: f.cage.trim(),
+      value: Math.max(0, Number(f.value) || 0), health: clampNum(f.health, 0, 100),
+      flags: Math.max(0, Math.round(Number(f.flags) || 0)), days: Math.max(0, Math.round(Number(f.days) || 0)),
+    });
+    onClose(); if (onCreated) onCreated(id);
+  };
+  return (
+    <Modal open={open} onClose={onClose} width="max-w-2xl">
+      <div>
+        <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor:'#eceee9' }}>
+          <div className="flex items-center gap-2.5">
+            <span className="flex items-center justify-center w-8 h-8" style={{ background:'#eaf0e4' }}><I.Users size={16} style={{ color:C.forest }}/></span>
+            <h3 className="font-bold text-[15px]" style={{ color:C.charcoal }}>Add Contractor to Portfolio</h3>
+          </div>
+          <button onClick={onClose}><I.X size={20} style={{ color:C.gray }}/></button>
+        </div>
+        <div className="px-6 py-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <FField label="Contractor Name *"><input className={F_INPUT} style={F_BORDER} value={f.name} onChange={e=>set('name', e.target.value)} placeholder="e.g. Vanguard Systems LLC"/></FField>
+          <FField label="CAGE Code *"><input className={F_INPUT} style={F_BORDER} value={f.cage} onChange={e=>set('cage', e.target.value)} placeholder="e.g. 8X2K5"/></FField>
+          <FField label="Contract Number"><input className={F_INPUT} style={F_BORDER} value={f.contractNumber} onChange={e=>set('contractNumber', e.target.value)} placeholder="e.g. W91QZ-26-C-0031"/></FField>
+          <FField label="Contract Value (USD)"><input type="number" className={F_INPUT} style={F_BORDER} value={f.value} onChange={e=>set('value', e.target.value)}/></FField>
+          <FField label="ACC Center"><FSelect value={f.accCenter} onChange={v=>set('accCenter', v)} options={['ACC-APG','ACC-RSA','ACC-WRN','ACC-DTA','ACC APG']}/></FField>
+          <FField label="Contract Type"><FSelect value={f.contractType} onChange={v=>set('contractType', v)} options={['Cost Plus Fixed Fee','Firm Fixed Price','Time and Materials','Cost Plus Incentive Fee']}/></FField>
+          <FField label="CPARS Rating"><FSelect value={f.cpars} onChange={v=>set('cpars', v)} options={['Outstanding','Very Good','Satisfactory','Marginal','Unsatisfactory']}/></FField>
+          <FField label="Subcontracting Status"><FSelect value={f.sub} onChange={v=>set('sub', v)} options={['On Track','At Risk','Critical']}/></FField>
+          <FField label="Health Score (0–100)"><input type="number" min="0" max="100" className={F_INPUT} style={F_BORDER} value={f.health} onChange={e=>set('health', e.target.value)}/></FField>
+          <FField label="Active Risk Flags"><input type="number" min="0" className={F_INPUT} style={F_BORDER} value={f.flags} onChange={e=>set('flags', e.target.value)}/></FField>
+          <FField label="Days to POP End"><input type="number" min="0" className={F_INPUT} style={F_BORDER} value={f.days} onChange={e=>set('days', e.target.value)}/></FField>
+        </div>
+        <div className="px-6 pb-6 pt-1 flex gap-3">
+          <Btn color="forest" full icon={I.Check} onClick={submit}>Add Contractor</Btn>
+          <Btn color="charcoal" type="outline" full onClick={onClose}>Cancel</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+const AddContractModal = ({ open, onClose, onAdd, contractorName }) => {
+  const init = { number:'', value:1500000, type:'Firm Fixed Price', status:'Active', popEnd:'', awarded:'' };
+  const [f, setF] = useState(init);
+  useEffect(() => { if (open) setF(init); }, [open]);
+  const set = (k, v) => setF(s => ({ ...s, [k]: v }));
+  const submit = () => {
+    if (!f.number.trim()) { alert('Contract number is required.'); return; }
+    const val = Math.max(0, Number(f.value) || 0);
+    onAdd({ number: f.number.trim(), value: val, valueLabel: abbrMoney(val), type: f.type, status: f.status, popEnd: f.popEnd.trim() || 'Active', awarded: f.awarded.trim() || '—' });
+    onClose();
+  };
+  return (
+    <Modal open={open} onClose={onClose} width="max-w-lg">
+      <div>
+        <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor:'#eceee9' }}>
+          <div className="flex items-center gap-2.5">
+            <span className="flex items-center justify-center w-8 h-8" style={{ background:'#eaf0e4' }}><I.FileText size={16} style={{ color:C.forest }}/></span>
+            <h3 className="font-bold text-[15px]" style={{ color:C.charcoal }}>Add Contract{contractorName ? ' — ' + contractorName : ''}</h3>
+          </div>
+          <button onClick={onClose}><I.X size={20} style={{ color:C.gray }}/></button>
+        </div>
+        <div className="px-6 py-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <FField label="Contract Number *"><input className={F_INPUT} style={F_BORDER} value={f.number} onChange={e=>set('number', e.target.value)} placeholder="e.g. W58RGZ-26-C-0088"/></FField>
+          <FField label="Contract Value (USD)"><input type="number" className={F_INPUT} style={F_BORDER} value={f.value} onChange={e=>set('value', e.target.value)}/></FField>
+          <FField label="Contract Type"><FSelect value={f.type} onChange={v=>set('type', v)} options={['Firm Fixed Price','Cost Plus Fixed Fee','Time and Materials','Cost Plus Incentive Fee','IDIQ']}/></FField>
+          <FField label="Status"><FSelect value={f.status} onChange={v=>set('status', v)} options={['Active','Pending','Option Exercised','Awarded']}/></FField>
+          <FField label="Period of Performance End"><input className={F_INPUT} style={F_BORDER} value={f.popEnd} onChange={e=>set('popEnd', e.target.value)} placeholder="e.g. March 31, 2028"/></FField>
+          <FField label="Date Awarded"><input className={F_INPUT} style={F_BORDER} value={f.awarded} onChange={e=>set('awarded', e.target.value)} placeholder="e.g. July 10, 2026"/></FField>
+        </div>
+        <div className="px-6 pb-6 pt-1 flex gap-3">
+          <Btn color="forest" full icon={I.Check} onClick={submit}>Add Contract</Btn>
+          <Btn color="charcoal" type="outline" full onClick={onClose}>Cancel</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+const ContractsPanel = ({ d, onAdd }) => {
+  const list = d.contracts || [];
+  const th = "px-3 py-2.5 text-left text-[11px] font-bold uppercase tracking-wide";
+  return (
+    <Panel title="Contract Vehicles" tag={<SourceTag label="EDA Feed" live/>}
+      right={<Btn size="sm" color="forest" icon={I.FileText} onClick={onAdd}>Add Contract</Btn>}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="border-b" style={{ borderColor:'#eceee9', background:'#fafbf8' }}>
+              <th className={th} style={{ color:'#4b5443' }}>Contract Number</th>
+              <th className={th + " text-right"} style={{ color:'#4b5443' }}>Value</th>
+              <th className={th} style={{ color:'#4b5443' }}>Type</th>
+              <th className={th} style={{ color:'#4b5443' }}>Status</th>
+              <th className={th} style={{ color:'#4b5443' }}>Period of Performance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((c, i) => (
+              <tr key={i} className="border-b hover:bg-black/[0.015]" style={{ borderColor:'#f2f3ef' }}>
+                <td className="px-3 py-2.5 font-mono text-[12px] font-semibold" style={{ color:C.charcoal }}>{c.number}</td>
+                <td className="px-3 py-2.5 text-right font-semibold" style={{ color:C.charcoal }}>{c.valueLabel || abbrMoney(c.value)}</td>
+                <td className="px-3 py-2.5" style={{ color:C.charcoal }}>{c.type}</td>
+                <td className="px-3 py-2.5"><Pill color={c.status==='Pending'?'amber':'green'} small>{c.status}</Pill></td>
+                <td className="px-3 py-2.5" style={{ color:C.gray }}>{c.popEnd}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-3 text-[11px]" style={{ color:C.gray }}>
+        {list.length} active contract vehicle{list.length !== 1 ? 's' : ''} on file for {d.shortName}.
+      </div>
+    </Panel>
+  );
+};
+
+/* ============================================================
+   DASHBOARD PAGE
+============================================================ */
+const Dashboard = ({ selectedId, setSelectedId, task, notFound, clearNotFound }) => {
+  useCvVersion();
+  const d = CONTRACTORS[selectedId];
+  const [flagModal, setFlagModal] = useState(null);
+  const [showAddContract, setShowAddContract] = useState(false);
+  const ref = useRef(null);
+
+  const onSelect = (id) => {
+    setSelectedId(id);
+    clearNotFound();
+    if (ref.current) window.scrollTo({ top:0, behavior:'smooth' });
+  };
+
+  return (
+    <div ref={ref}>
+      <PageHeader title="Contractor Performance Dashboard"
+        subtitle="Real-time visibility across WAWF, eSRS, EDA, CPARS, and SDW">
+        <ContractorSearch onSearch={(id, term)=>{ if(id){ onSelect(id);} else { clearNotFound(term); } }}/>
+      </PageHeader>
+      <ContractStrip d={d}/>
+
+      {notFound && (
+        <div className="max-w-[1500px] mx-auto px-5 pt-4">
+          <div className="flex items-center gap-2.5 p-3 cv-fade" style={{ background:'#faf3df', border:'1px solid #ecdcaf' }}>
+            <I.AlertCircle size={18} style={{ color:C.goldDark }}/>
+            <p className="text-[12px]" style={{ color:'#6b5a1f' }}>No contractor matched “{notFound}”. Showing {d.shortName}. Select a contractor from the portfolio below.</p>
+          </div>
+        </div>
+      )}
+
+      <div className="max-w-[1500px] mx-auto px-5 py-6 space-y-6">
+        {/* Row 1 */}
+        <SummaryCards d={d}/>
+
+        {/* Row 2 */}
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <WawfPanel d={d}/>
+          <EsrsPanel d={d}/>
+          <CparsPanel d={d}/>
+        </div>
+
+        {/* Row 3 */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <BurnPanel d={d}/>
+          <RiskPanel d={d} onAction={(f)=>setFlagModal(f)}/>
+        </div>
+
+        {/* Contract vehicles */}
+        <ContractsPanel d={d} onAdd={()=>setShowAddContract(true)}/>
+
+        {/* Row 4 */}
+        <AuditReadinessPanel d={d} onGenerate={()=>task.run({ kind:'dcaa-audit', rec:d, title:'DCAA Audit Package', docs:47, doneTitle:'Audit Package Generated', doneSub:`47 documents compiled from ${d.shortName} records.`, doneMeta:'Ready for DCAA submission.' })}/>
+        <RegulatoryPanel d={d} onReport={()=>task.run({ kind:'regulatory', rec:d, title:'Regulatory Compliance Report', docs:18, doneTitle:'Regulatory Report Ready', doneSub:'Legacy FAR and FAR Overhaul status compiled across all monitored clauses.', doneMeta:'2 clauses flagged for review.' })}/>
+
+        {/* Row 5 */}
+        <AuditToolsSection onRun={task.run} rec={d}/>
+
+        {/* Row 6 */}
+        <PortfolioTable onSelect={onSelect} activeId={selectedId}/>
+      </div>
+
+      {/* Flag action modal */}
+      <Modal open={!!flagModal} onClose={()=>setFlagModal(null)}>
+        {flagModal && (
+          <div>
+            <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor:'#eceee9' }}>
+              <div className="flex items-center gap-2.5">
+                <span className="flex items-center justify-center w-8 h-8" style={{ background:`${statusColor(flagModal.color)}1a` }}><I.Flag size={16} style={{ color:statusColor(flagModal.color) }}/></span>
+                <h3 className="font-bold text-[15px]" style={{ color:C.charcoal }}>{flagModal.action}</h3>
+              </div>
+              <button onClick={()=>setFlagModal(null)}><I.X size={20} style={{ color:C.gray }}/></button>
+            </div>
+            <div className="px-6 py-6">
+              <Pill color={flagModal.color} small>{flagModal.sev}</Pill>
+              <h4 className="font-bold text-[15px] mt-2 mb-1" style={{ color:C.charcoal }}>{flagModal.title}</h4>
+              <p className="text-[13px] leading-relaxed mb-4" style={{ color:'#5a6152' }}>{flagModal.desc}</p>
+              <div className="p-3 mb-4" style={{ background:'#f6f7f4', border:'1px solid #eceee9' }}>
+                <div className="text-[10px] font-bold uppercase tracking-wide" style={{ color:'#7a8270' }}>Contract Reference</div>
+                <div className="font-mono text-[13px] font-semibold" style={{ color:C.charcoal }}>{flagModal.ref}</div>
+              </div>
+              <p className="text-[12px] mb-5" style={{ color:C.gray }}>An action record has been drafted and routed to the contract file. Confirm to log this action to the audit trail.</p>
+              <div className="flex gap-3">
+                <Btn color={flagModal.color==='red'?'red':'amber'} full icon={I.Check} onClick={()=>setFlagModal(null)}>Confirm &amp; Log Action</Btn>
+                <Btn color="charcoal" type="outline" full onClick={()=>setFlagModal(null)}>Cancel</Btn>
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <AddContractModal open={showAddContract} onClose={()=>setShowAddContract(false)} contractorName={d.shortName} onAdd={(c)=>addContractToContractor(d.id, c)}/>
+    </div>
+  );
+};
+
+/* ============================================================
+   CONTRACTORS PAGE (portfolio-first)
+============================================================ */
+const ContractorsPage = ({ setSelectedId, setPage, selectedId }) => (
+  <div>
+    <PageHeader title="Monitored Contractors" subtitle="AMC contractor portfolio — select a contractor to open the full performance dashboard"/>
+    <div className="max-w-[1500px] mx-auto px-5 py-6">
+      <PortfolioTable activeId={selectedId} onSelect={(id)=>{ setSelectedId(id); setPage('dashboard'); }}/>
+    </div>
+  </div>
+);
+
+/* ============================================================
+   COMPLIANCE PAGE
+============================================================ */
+const CompliancePage = ({ selectedId, task }) => {
+  const d = CONTRACTORS[selectedId];
+  return (
+    <div>
+      <PageHeader title="Compliance Center" subtitle={`Subcontracting, CPARS, and regulatory compliance — ${d.shortName}`}/>
+      <div className="max-w-[1500px] mx-auto px-5 py-6 space-y-6">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <EsrsPanel d={d}/>
+          <CparsPanel d={d}/>
+        </div>
+        <RegulatoryPanel d={d} onReport={()=>task.run({ kind:'regulatory', rec:d, title:'Regulatory Compliance Report', docs:18, doneTitle:'Regulatory Report Ready', doneSub:'Legacy FAR and FAR Overhaul status compiled.', doneMeta:'2 clauses flagged for review.' })}/>
+      </div>
+    </div>
+  );
+};
+
+/* ============================================================
+   AUDIT TOOLS PAGE
+============================================================ */
+const AuditPage = ({ selectedId, task }) => {
+  const d = CONTRACTORS[selectedId];
+  return (
+    <div>
+      <PageHeader title="Audit Tools" subtitle={`DCAA and DCMA audit preparation and document generation — ${d.shortName}`}/>
+      <div className="max-w-[1500px] mx-auto px-5 py-6 space-y-6">
+        <AuditReadinessPanel d={d} onGenerate={()=>task.run({ kind:'dcaa-audit', rec:d, title:'DCAA Audit Package', docs:47, doneTitle:'Audit Package Generated', doneSub:`47 documents compiled from ${d.shortName} records.`, doneMeta:'Ready for DCAA submission.' })}/>
+        <AuditToolsSection onRun={task.run} rec={d}/>
+      </div>
+    </div>
+  );
+};
+
+/* ============================================================
+   REPORTS PAGE
+============================================================ */
+const REPORTS = [
+  { icon:I.BarChart,  kind:'report:portfolio',     title:'Portfolio Health Summary Report', desc:'Aggregate health scoring, risk flag distribution, and CPARS trends across all monitored contractors in the AMC portfolio.' },
+  { icon:I.Shield,    kind:'report:dcaa',          title:'DCAA Audit Readiness Report',     desc:'Consolidated audit readiness scoring, system approval status, and open documentation gaps ready for DCAA review.' },
+  { icon:I.Users,     kind:'report:subcontracting', title:'Subcontracting Compliance Report', desc:'Small business subcontracting participation against committed plan targets across every category and contract.' },
+  { icon:I.Dollar,    kind:'report:fy',            title:'Fiscal Year End Obligation Report', desc:'Obligation and burn-rate posture, projected fund exhaustion, and modification exposure across the portfolio.' },
+];
+
+const ReportCard = ({ r, onGenerate }) => {
+  const [state, setState] = useState('idle'); // idle | working | done
+  const [prog, setProg] = useState(0);
+  const t = useRef(null);
+  const start = () => {
+    setState('working'); setProg(0);
+    let p=0; clearInterval(t.current);
+    t.current = setInterval(()=>{ p+=Math.random()*16+7; if(p>=100){p=100;clearInterval(t.current);setProg(100);setTimeout(()=>setState('done'),350);} else setProg(p); },210);
+  };
+  return (
+    <div className="bg-white p-6 flex flex-col shadow-card" style={{ border:'1px solid #e3e6df', borderTop:`3px solid ${C.forest}` }}>
+      <div className="flex items-center gap-3 mb-3">
+        <span className="flex items-center justify-center w-12 h-12" style={{ background:'#eaf0e4' }}><r.icon size={24} style={{ color:C.forest }}/></span>
+        <h3 className="font-bold text-[16px]" style={{ color:C.charcoal }}>{r.title}</h3>
+      </div>
+      <p className="text-[13px] leading-relaxed flex-1 mb-5" style={{ color:'#5a6152' }}>{r.desc}</p>
+      {state==='idle' && <Btn color="forest" icon={I.FileText} onClick={start}>Generate Report</Btn>}
+      {state==='working' && (
+        <div>
+          <div className="h-2.5 w-full overflow-hidden" style={{ background:C.track }}>
+            <div className="h-full transition-all duration-200" style={{ width:`${prog}%`, background:C.forest }}/>
+          </div>
+          <p className="mt-2 text-[11px] font-semibold uppercase tracking-wide" style={{ color:C.forest }}>{Math.round(prog)}% — {prog<45?'Aggregating data':prog<80?'Rendering report':'Finalizing PDF'}</p>
+        </div>
+      )}
+      {state==='done' && (
+        <div className="cv-fade">
+          <div className="flex items-center gap-2 mb-3">
+            <I.CheckCircle size={20} style={{ color:C.forest }}/>
+            <span className="font-bold text-[14px]" style={{ color:C.charcoal }}>Report Ready</span>
+          </div>
+          <div className="flex gap-3">
+            <Btn color="forest" full size="sm" icon={I.Download} onClick={()=>generateCommandViewPdf({ kind:r.kind })}>Download PDF</Btn>
+            <Btn color="gold" full size="sm" icon={I.Mail} onClick={()=>setState('idle')}>Share via Email</Btn>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ReportsPage = () => (
+  <div>
+    <PageHeader title="Reports" subtitle="Generate portfolio, audit, compliance, and obligation reports"/>
+    <div className="max-w-[1500px] mx-auto px-5 py-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+      {REPORTS.map((r,i)=><ReportCard key={i} r={r}/>)}
+    </div>
+  </div>
+);
+
+/* ============================================================
+   SETTINGS PAGE
+============================================================ */
+const INTEGRATIONS = [
+  { name:'WAWF', status:'Connected', color:'green', sync:'Today, 07:42 EDT' },
+  { name:'eSRS', status:'Connected', color:'green', sync:'Today, 06:15 EDT' },
+  { name:'EDA', status:'Connected', color:'green', sync:'Today, 07:38 EDT' },
+  { name:'CPARS', status:'Connected', color:'green', sync:'Today, 05:50 EDT' },
+  { name:'SDW', status:'Connected', color:'green', sync:'Today, 07:41 EDT' },
+  { name:'CMMC Portal', status:'Pending', color:'amber', sync:'Awaiting credential approval' },
+  { name:'FAR Overhaul Monitor', status:'Active', color:'green', sync:'Today, 04:30 EDT' },
+];
+
+const Toggle = ({ on, onChange }) => (
+  <button onClick={()=>onChange && onChange(!on)} className="relative w-11 h-6 transition-colors flex-shrink-0"
+    style={{ background: on?C.forest:'#c3c9bd' }}>
+    <span className="absolute top-0.5 w-5 h-5 bg-white transition-all" style={{ left: on?'22px':'2px' }}/>
+  </button>
+);
+
+const CV_SETTINGS_KEY = 'commandview_settings_v1';
+const cvLoadSettings = () => { try { return JSON.parse(localStorage.getItem(CV_SETTINGS_KEY)) || {}; } catch (e) { return {}; } };
+const cvSaveSettings = (patch) => { try { const cur = cvLoadSettings(); localStorage.setItem(CV_SETTINGS_KEY, JSON.stringify({ ...cur, ...patch })); } catch (e) {} };
+const cvNowClock = () => 'Today, ' + new Date().toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', hour12:false }) + ' EDT';
+
+const SettingsSection = ({ title, icon:IconC, children }) => (
+  <Panel title={title} tag={<span className="flex items-center justify-center w-7 h-7" style={{ background:'#eaf0e4' }}><IconC size={15} style={{ color:C.forest }}/></span>}>
+    {children}
+  </Panel>
+);
+
+const SettingsPage = () => {
+  const saved0 = cvLoadSettings();
+  const [toggles, setToggles] = useState(() => ({
+    critFlags:true, invoiceRej:true, subShort:true, popWarn:true, cparsChg:true, weekly:false,
+    cac:true, mfa:true, audit:true, timeout:true, ...(saved0.toggles || {}),
+  }));
+  const [profile, setProfile] = useState(() => ({
+    name:'Jordan Reynolds', role:'Contracting Officer', center:'Aberdeen Proving Ground',
+    warrant:'Unlimited (KO)', email:'j.reynolds@acc.army.mil', cac:'1487-REYNOLDS-J', ...(saved0.profile || {}),
+  }));
+  const [integrations, setIntegrations] = useState(() => saved0.integrations || INTEGRATIONS);
+  const [savedFlash, setSavedFlash] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const flashTimer = useRef(null);
+  useEffect(() => () => clearTimeout(flashTimer.current), []);
+
+  const setToggle = (k, v) => setToggles(t => { const n = { ...t, [k]: v }; cvSaveSettings({ toggles: n }); return n; });
+  const setField = (k, v) => setProfile(p => ({ ...p, [k]: v }));
+  const saveProfile = () => { cvSaveSettings({ profile }); setSavedFlash(true); clearTimeout(flashTimer.current); flashTimer.current = setTimeout(() => setSavedFlash(false), 2200); };
+  const syncNow = () => {
+    setSyncing(true);
+    setTimeout(() => {
+      const updated = integrations.map(it => it.status === 'Pending' ? it : ({ ...it, sync: cvNowClock() }));
+      setIntegrations(updated); cvSaveSettings({ integrations: updated }); setSyncing(false);
+    }, 1100);
+  };
+
+  const Field = ({ label, k }) => (
+    <div>
+      <label className="block text-[11px] font-bold uppercase tracking-wide mb-1" style={{ color:'#7a8270' }}>{label}</label>
+      <input value={profile[k]} onChange={e=>setField(k, e.target.value)} className="w-full px-3 py-2 text-[13px] outline-none" style={{ border:'1px solid #d7dbd1', color:C.charcoal }}/>
+    </div>
+  );
+  const Row = ({ label, desc, k }) => (
+    <div className="flex items-center justify-between py-3 border-b" style={{ borderColor:'#f1f2ee' }}>
+      <div><div className="text-[13px] font-semibold" style={{ color:C.charcoal }}>{label}</div><div className="text-[11px]" style={{ color:C.gray }}>{desc}</div></div>
+      <Toggle on={!!toggles[k]} onChange={v=>setToggle(k, v)}/>
+    </div>
+  );
+  const initials = (profile.name || 'JR').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase() || 'JR';
+
+  return (
+    <div>
+      <PageHeader title="Settings" subtitle="Profile, notifications, integrations, and access control"/>
+      <div className="max-w-[1500px] mx-auto px-5 py-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <SettingsSection title="User Profile" icon={I.User}>
+          <div className="flex items-center gap-4 mb-5">
+            <div className="w-16 h-16 flex items-center justify-center font-extrabold text-xl rounded-full" style={{ background:C.gold, color:C.forestDark, border:'2px solid #e4c46f' }}>{initials}</div>
+            <div>
+              <div className="font-bold text-[16px]" style={{ color:C.charcoal }}>{profile.name}</div>
+              <div className="text-[12px]" style={{ color:C.gray }}>{profile.role} · {profile.center}</div>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Field label="Full Name" k="name"/>
+            <Field label="Role" k="role"/>
+            <Field label="ACC Center" k="center"/>
+            <Field label="Warrant Level" k="warrant"/>
+            <Field label="Email" k="email"/>
+            <Field label="CAC ID" k="cac"/>
+          </div>
+          <div className="mt-5 flex items-center gap-3">
+            <Btn color="forest" size="sm" icon={I.Check} onClick={saveProfile}>Save Profile</Btn>
+            {savedFlash && <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold cv-fade" style={{ color:C.forest }}><I.CheckCircle size={14}/> Profile saved</span>}
+          </div>
+        </SettingsSection>
+
+        <SettingsSection title="Notification Preferences" icon={I.Bell}>
+          <Row label="Critical Risk Flags" desc="Immediate alert on any critical severity flag" k="critFlags"/>
+          <Row label="Invoice Rejections" desc="Notify when a WAWF invoice is rejected" k="invoiceRej"/>
+          <Row label="Subcontracting Shortfalls" desc="Alert when a category falls below plan pace" k="subShort"/>
+          <Row label="Period of Performance Warnings" desc="Notify at 90, 60, and 30 days to POP end" k="popWarn"/>
+          <Row label="CPARS Rating Changes" desc="Alert on any rating decline" k="cparsChg"/>
+          <Row label="Weekly Digest Email" desc="Summary of portfolio health each Monday" k="weekly"/>
+        </SettingsSection>
+
+        <SettingsSection title="System Integrations" icon={I.Plug}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {integrations.map((it,i)=>(
+              <div key={i} className="p-3.5 flex items-start justify-between" style={{ border:'1px solid #e3e6df', background:'#fbfbfa' }}>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full" style={{ background:statusColor(it.color) }}/>
+                    <span className="font-bold text-[13px]" style={{ color:C.charcoal }}>{it.name}</span>
+                  </div>
+                  <div className="text-[11px] mt-1.5" style={{ color:C.gray }}>Last sync: {it.sync}</div>
+                </div>
+                <Pill color={it.color} small>{it.status}</Pill>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <span className="flex items-center gap-2 text-[11px]" style={{ color:C.gray }}><I.Refresh size={13}/> All connected feeds sync automatically every 4 hours.</span>
+            <Btn color="forest" size="sm" icon={I.Refresh} onClick={syncNow} disabled={syncing}>{syncing ? 'Syncing…' : 'Sync Now'}</Btn>
+          </div>
+        </SettingsSection>
+
+        <SettingsSection title="Access Control" icon={I.Lock}>
+          <Row label="CAC Authentication Required" desc="Enforce smart card login for all sessions" k="cac"/>
+          <Row label="Multi-Factor Authentication" desc="Secondary PIN challenge on sensitive actions" k="mfa"/>
+          <Row label="Audit Logging" desc="Log all user actions to the immutable audit trail" k="audit"/>
+          <Row label="Session Timeout" desc="Auto lock after 15 minutes of inactivity" k="timeout"/>
+          <div className="mt-4 p-3 flex items-start gap-2.5" style={{ background:'#eaf0e4', border:'1px solid #d3e0c6' }}>
+            <I.Shield size={16} style={{ color:C.forest, marginTop:1 }}/>
+            <p className="text-[11.5px] leading-relaxed" style={{ color:'#3c4a2e' }}>This platform operates under FISMA moderate controls. All data is encrypted at rest and in transit. Access is restricted to authorized government personnel with an active CAC.</p>
+          </div>
+        </SettingsSection>
+      </div>
+    </div>
+  );
+};
+
+/* ============================================================
+   AI ASSISTANT
+============================================================ */
+const AI_SUGGESTIONS = [
+  'Which contractors are approaching their period of performance end?',
+  'Which contracts have critical subcontracting compliance gaps?',
+  'Show me all rejected invoices across my portfolio.',
+  'Which contractors are at highest risk of cure notice?',
+  'Generate a summary report for Apex Defense Solutions.',
+];
+
+// Rich, data-referencing responses (React nodes)
+const aiRespond = (q) => {
+  const H = ({children}) => <div className="font-bold text-[13px] mt-3 mb-1.5" style={{ color:C.charcoal }}>{children}</div>;
+  const P = ({children}) => <p className="text-[12.5px] leading-relaxed mb-2" style={{ color:'#3f463a' }}>{children}</p>;
+  const B = ({children}) => <li className="text-[12.5px] leading-relaxed flex gap-2 mb-1.5"><span style={{ color:C.gold }}>▸</span><span style={{ color:'#3f463a' }}>{children}</span></li>;
+  const UL = ({children}) => <ul className="mb-2">{children}</ul>;
+
+  const rows = liveRows();
+  const recOf = (id) => CONTRACTORS[id];
+
+  if (q.includes('period of performance')) {
+    const near = rows.filter(r=>r.days<=120).sort((a,b)=>a.days-b.days);
+    return (
+      <div>
+        <P>{near.length} contractor{near.length!==1?'s':''} in your portfolio {near.length!==1?'are':'is'} within 120 days of period of performance end. Ranked by urgency:</P>
+        <UL>
+          {near.map(r=><B key={r.id}><b>{r.name}</b> ({r.cage}) — <b style={{color: r.days<45?C.critical:C.goldDark}}>{r.days} days</b> · {r.valueLabel} · Health {r.health}</B>)}
+        </UL>
+        <H>Recommended Action</H>
+        {near.length
+          ? <P><b>{near[0].name} ({near[0].days} days)</b> is the most urgent{near[1] ? <> , followed by <b>{near[1].name} ({near[1].days} days)</b></> : null}. Any contractor inside 90 days with no modification on file should have a mod request initiated now to prevent a lapse.</P>
+          : <P>No contractors are within 120 days of period of performance end. No immediate action required.</P>}
+      </div>
+    );
+  }
+  if (q.includes('subcontracting')) {
+    const crit = rows.filter(r=>r.subColor==='red').sort((a,b)=>a.health-b.health);
+    const worst = crit[0] ? recOf(crit[0].id) : null;
+    return (
+      <div>
+        <P>{crit.length} contractor{crit.length!==1?'s':''} {crit.length!==1?'have':'has'} critical subcontracting compliance status.{worst ? <> The most severe gap is on <b>{worst.shortName}</b>:</> : ''}</P>
+        {worst && <>
+          <H>{worst.shortName} — {worst.contractNumber}</H>
+          <UL>{worst.esrs.filter(e=>e.status==='red' || e.cat==='Total Small Business').map((e,i)=><B key={i}><b>{e.cat}: {e.actual}% actual vs {e.committed}% committed</b> — {e.note}</B>)}</UL>
+        </>}
+        {crit.length>0 && <>
+          <H>Portfolio-Wide Critical</H>
+          <UL>{crit.map(r=><B key={r.id}><b>{r.name}</b> — subcontracting status <b style={{color:C.critical}}>Critical</b></B>)}</UL>
+        </>}
+        <P>Recommend issuing cure notice warnings before the next eSRS reporting cycle for any contractor at risk of subcontracting plan default.</P>
+      </div>
+    );
+  }
+  if (q.includes('rejected invoice')) {
+    const list = [];
+    rows.forEach(r=>{ (recOf(r.id).invoices||[]).filter(iv=>iv.status==='Rejected').forEach(iv=>list.push({ c:r.name, iv })); });
+    list.sort((a,b)=>b.iv.amount-a.iv.amount);
+    const top = list[0];
+    return (
+      <div>
+        <P>{list.length} rejected invoice{list.length!==1?'s':''} {list.length!==1?'are':'is'} currently open across your portfolio, totaling <b style={{color:C.critical}}>{money0(list.reduce((s,x)=>s+x.iv.amount,0))}</b>:</P>
+        <UL>{list.map((x,i)=><B key={i}><b>{x.iv.num}</b> — {x.c} · <b style={{color:C.critical}}>{money0(x.iv.amount)}</b> · rejected {x.iv.date}</B>)}</UL>
+        {top && <>
+          <H>Highest Priority</H>
+          <P><b>{top.c}</b> invoice <b>{top.iv.num} ({money0(top.iv.amount)})</b> is the largest open rejection and should be resolved first. Rejections open past the 5-day threshold with no resubmission are flagged critical.</P>
+        </>}
+      </div>
+    );
+  }
+  if (q.includes('cure notice')) {
+    const risk = rows.filter(r=>r.health<60 || r.flags>=4).sort((a,b)=>a.health-b.health);
+    return (
+      <div>
+        <P>Based on health score, open flags, CPARS rating, and subcontracting status, {risk.length} contractor{risk.length!==1?'s':''} carr{risk.length!==1?'y':'ies'} the highest cure notice risk:</P>
+        <UL>{risk.map(r=><B key={r.id}><b>{r.name}</b> — Health <b style={{color:C.critical}}>{r.health}</b> · {r.flags} flags · CPARS {r.cpars}</B>)}</UL>
+        <H>Assessment</H>
+        {risk[0]
+          ? <P><b>{risk[0].name} (Health {risk[0].health}, {risk[0].flags} flags, {risk[0].cpars})</b> is the leading candidate{risk[1] ? <>, with <b>{risk[1].name}</b> a close second</> : null}. An Unsatisfactory or Marginal CPARS rating combined with multiple open flags and a short POP window is a defensible basis for a cure notice.</P>
+          : <P>No contractors currently meet the cure notice risk threshold. Portfolio is in good standing.</P>}
+      </div>
+    );
+  }
+  // executive summary — match a contractor named in the query, else default to Apex
+  let target = null;
+  for (const r of rows) { if (q.includes(r.name.toLowerCase()) || (r.cage && q.includes(r.cage.toLowerCase()))) { target = recOf(r.id); break; } }
+  if (!target) target = CONTRACTORS['apex'] || recOf(rows[0].id);
+  const d = target;
+  const rej = (d.invoices||[]).filter(iv=>iv.status==='Rejected');
+  const hub = (d.esrs||[]).find(e=>e.cat==='HUBZone');
+  return (
+    <div>
+      <H>{d.shortName} — Executive Summary</H>
+      <P>CAGE {d.cage} · {d.contractNumber} · {d.accCenter} · {d.valueLabel} {d.contractType}</P>
+      <UL>
+        <B><b>Health Score {d.healthScore}/100</b> — {d.healthPill}{d.cpars.trend==='down'?', trending down':''}</B>
+        <B><b>{d.activeFlags} open risk flag{d.activeFlags!==1?'s':''}</b>{d.flags && d.flags.length ? <> — e.g. {d.flags[0].title}</> : null}</B>
+        <B><b>CPARS: {d.cparsRating}</b> — {d.cpars.note}</B>
+        <B><b>Burn rate {d.burn.pct}%</b> — {abbrMoney(d.burn.obligated)} of {abbrMoney(d.burn.total)}; funds project to exhaust {d.burn.projected}</B>
+        <B><b>Subcontracting: {d.subStatus}</b>{hub ? <> — HUBZone {hub.actual}% vs {hub.committed}% committed</> : null}</B>
+        <B><b>DCAA audit readiness {d.audit.score}/100</b> — {d.audit.items.filter(i=>i.state!=='green').length} open item{d.audit.items.filter(i=>i.state!=='green').length!==1?'s':''}</B>
+      </UL>
+      <H>Bottom Line</H>
+      <P>{d.shortName} is monitored across {(d.contracts||[]).length} active contract vehicle{(d.contracts||[]).length!==1?'s':''}. {rej.length ? `There ${rej.length===1?'is':'are'} ${rej.length} open invoice rejection${rej.length!==1?'s':''} totaling ${money0(rej.reduce((s,x)=>s+x.amount,0))}. ` : ''}{d.daysToPop<120 ? `With ${d.daysToPop} days to POP end, confirm a modification is on file. ` : ''}Overall posture is {String(d.healthPill).toLowerCase()}.</P>
+    </div>
+  );
+};
+
+const AIAssistant = ({ open, setOpen }) => {
+  const [messages, setMessages] = useState([
+    { role:'ai', node:<p className="text-[12.5px] leading-relaxed" style={{ color:'#3f463a' }}>I'm the CommandView AI Assistant. Ask me about contractor risk, compliance gaps, invoices, or generate a summary. Try one of the suggestions below.</p> },
+  ]);
+  const [typing, setTyping] = useState(false);
+  const [input, setInput] = useState('');
+  const bodyRef = useRef(null);
+  const timerRef = useRef(null);
+
+  useEffect(()=>{ if(bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight; }, [messages, typing]);
+  useEffect(()=>()=>clearTimeout(timerRef.current), []);
+
+  const ask = (q) => {
+    if (!q.trim()) return;
+    setMessages(m=>[...m, { role:'user', text:q }]);
+    setInput('');
+    setTyping(true);
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(()=>{
+      setTyping(false);
+      setMessages(m=>[...m, { role:'ai', node: aiRespond(q.toLowerCase()) }]);
+    }, 1500);
+  };
+
+  return (
+    <>
+      {/* floating button */}
+      <button onClick={()=>setOpen(o=>!o)}
+        className="fixed bottom-6 right-6 z-[70] flex items-center gap-2.5 pl-4 pr-5 py-3 shadow-2xl transition-transform hover:scale-[1.03]"
+        style={{ background:C.gold, color:C.forestDark, borderRadius:'999px' }}>
+        <span className="flex items-center justify-center w-8 h-8 rounded-full" style={{ background:C.forest }}><I.Brain size={18} style={{ color:'#fff' }}/></span>
+        <span className="font-bold text-[13px] uppercase tracking-wide">Ask CommandView</span>
+      </button>
+
+      {/* panel */}
+      {open && (
+        <div className="fixed bottom-24 right-6 z-[75] w-[min(420px,calc(100vw-2rem))] h-[600px] max-h-[calc(100vh-8rem)] bg-white shadow-2xl flex flex-col cv-slide-up"
+             style={{ border:'1px solid #d7dbd1', borderTop:`3px solid ${C.gold}` }}>
+          <div className="flex items-center justify-between px-4 py-3" style={{ background:C.forest }}>
+            <div className="flex items-center gap-2.5">
+              <span className="flex items-center justify-center w-8 h-8 rounded-full" style={{ background:C.gold }}><I.Brain size={17} style={{ color:C.forestDark }}/></span>
+              <div className="leading-tight">
+                <div className="font-bold text-[13px]" style={{ color:'#fff' }}>CommandView AI Assistant</div>
+                <div className="text-[10px]" style={{ color:'#cbd6bd' }}>Powered by Mission Intelligence</div>
+              </div>
+            </div>
+            <button onClick={()=>setOpen(false)}><I.X size={20} style={{ color:'#e8ecdf' }}/></button>
+          </div>
+
+          {/* suggestions */}
+          <div className="px-3 pt-3 pb-1 flex flex-wrap gap-1.5 border-b" style={{ borderColor:'#eceee9' }}>
+            {AI_SUGGESTIONS.map((s,i)=>(
+              <button key={i} onClick={()=>ask(s)}
+                className="text-left text-[11px] px-2.5 py-1.5 leading-tight transition-colors hover:brightness-95"
+                style={{ background:'#eef3e8', color:C.forest, border:'1px solid #d3e0c6' }}>{s}</button>
+            ))}
+          </div>
+
+          {/* messages */}
+          <div ref={bodyRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3" style={{ background:'#fbfcfa' }}>
+            {messages.map((m,i)=>(
+              m.role==='user'
+                ? <div key={i} className="flex justify-end"><div className="max-w-[85%] px-3 py-2 text-[12.5px]" style={{ background:C.forest, color:'#fff' }}>{m.text}</div></div>
+                : <div key={i} className="flex gap-2">
+                    <span className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-full mt-0.5" style={{ background:'#eaf0e4' }}><I.Brain size={14} style={{ color:C.forest }}/></span>
+                    <div className="max-w-[88%] px-3 py-2.5" style={{ background:'#fff', border:'1px solid #e3e6df' }}>{m.node}</div>
+                  </div>
+            ))}
+            {typing && (
+              <div className="flex gap-2">
+                <span className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-full mt-0.5" style={{ background:'#eaf0e4' }}><I.Brain size={14} style={{ color:C.forest }}/></span>
+                <div className="px-4 py-3 cv-typing" style={{ background:'#fff', border:'1px solid #e3e6df' }}><span/><span/><span/></div>
+              </div>
+            )}
+          </div>
+
+          {/* input */}
+          <div className="p-3 border-t flex items-center gap-2" style={{ borderColor:'#eceee9' }}>
+            <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&ask(input)}
+              placeholder="Ask about your portfolio…" className="flex-1 px-3 py-2.5 text-[13px] outline-none" style={{ border:'1px solid #d7dbd1' }}/>
+            <button onClick={()=>ask(input)} className="flex items-center justify-center w-10 h-10 flex-shrink-0" style={{ background:C.forest }}><I.Send size={17} style={{ color:'#fff' }}/></button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+/* ============================================================
+   FOOTER
+============================================================ */
+const Footer = () => (
+  <footer style={{ background:C.forest, borderTop:`3px solid ${C.gold}` }}>
+    <div className="max-w-[1500px] mx-auto px-5 py-6 flex flex-col md:flex-row items-center justify-between gap-3">
+      <div className="text-center md:text-left">
+        <div className="font-extrabold tracking-widest text-[14px]" style={{ color:C.gold }}>COMMANDVIEW — MISSION VISIBILITY PLATFORM</div>
+        <div className="text-[11px] mt-1" style={{ color:'rgba(255,255,255,0.6)' }}>
+          <a href="https://commandview.com" className="underline hover:text-white" style={{ color:'rgba(255,255,255,0.85)' }}>CommandView.com</a>
+          {' · '}Powered by <a href="https://cosbyaisolutions.com" className="underline hover:text-white" style={{ color:'rgba(255,255,255,0.85)' }}>Cosby AI Solutions</a>
+        </div>
+      </div>
+      <div className="text-[10px] text-center md:text-right" style={{ color:'rgba(255,255,255,0.55)' }}>
+        Secure Government Platform · All Data Encrypted · Audit Logged
+      </div>
+    </div>
+  </footer>
+);
+
+/* ============================================================
+   ROOT APP
+============================================================ */
+const App = () => {
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [page, setPage] = useState('dashboard');
+  const [selectedId, setSelectedId] = useState('apex');
+  const [aiOpen, setAiOpen] = useState(false);
+  const [bellOpen, setBellOpen] = useState(false);
+  const [notFound, setNotFound] = useState(null);
+  const task = useTaskModal();
+
+  const clearNotFound = (term) => setNotFound(term || null);
+
+  useEffect(()=>{ window.scrollTo(0,0); }, [page]);
+
+  if (!loggedIn) return <Login onLogin={()=>setLoggedIn(true)}/>;
+
+  return (
+    <div className="min-h-screen flex flex-col" style={{ background:C.offwhite }}>
+      <Navbar page={page} setPage={(p)=>{ setPage(p); setBellOpen(false); }} onBellClick={()=>setBellOpen(o=>!o)} alerts={3}/>
+      <NotificationPanel open={bellOpen} onClose={()=>setBellOpen(false)} onGoto={(p)=>setPage(p)}/>
+
+      <main className="flex-1">
+        {page==='dashboard'   && <Dashboard selectedId={selectedId} setSelectedId={setSelectedId} task={task} notFound={notFound} clearNotFound={clearNotFound}/>}
+        {page==='contractors' && <ContractorsPage selectedId={selectedId} setSelectedId={setSelectedId} setPage={setPage}/>}
+        {page==='compliance'  && <CompliancePage selectedId={selectedId} task={task}/>}
+        {page==='audit'       && <AuditPage selectedId={selectedId} task={task}/>}
+        {page==='reports'     && <ReportsPage/>}
+        {page==='settings'    && <SettingsPage/>}
+      </main>
+
+      <Footer/>
+      <AIAssistant open={aiOpen} setOpen={setAiOpen}/>
+      <TaskModal task={task}/>
+    </div>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
