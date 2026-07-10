@@ -2098,9 +2098,11 @@ const SettingsPage = () => {
   const [integrations, setIntegrations] = useState(() => saved0.integrations || INTEGRATIONS);
   const [savedFlash, setSavedFlash] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [sessTimeout, setSessTimeout] = useState(() => { const v = saved0.sessionTimeoutMin; return (v === undefined || v === null) ? 2 : Number(v); });
   const flashTimer = useRef(null);
   useEffect(() => () => clearTimeout(flashTimer.current), []);
 
+  const setSessTimeoutVal = (v) => { setSessTimeout(v); cvSaveSettings({ sessionTimeoutMin: v }); };
   const setToggle = (k, v) => setToggles(t => { const n = { ...t, [k]: v }; cvSaveSettings({ toggles: n }); return n; });
   const setField = (k, v) => setProfile(p => ({ ...p, [k]: v }));
   const saveProfile = () => { cvSaveSettings({ profile }); setSavedFlash(true); clearTimeout(flashTimer.current); flashTimer.current = setTimeout(() => setSavedFlash(false), 2200); };
@@ -2186,7 +2188,20 @@ const SettingsPage = () => {
           <Row label="CAC Authentication Required" desc="Enforce smart card login for all sessions" k="cac"/>
           <Row label="Multi-Factor Authentication" desc="Secondary PIN challenge on sensitive actions" k="mfa"/>
           <Row label="Audit Logging" desc="Log all user actions to the immutable audit trail" k="audit"/>
-          <Row label="Session Timeout" desc="Auto lock after 15 minutes of inactivity" k="timeout"/>
+          <div className="flex items-center justify-between py-3 border-b" style={{ borderColor:'#f1f2ee' }}>
+            <div>
+              <div className="text-[13px] font-semibold" style={{ color:C.charcoal }}>Session Timeout</div>
+              <div className="text-[11px]" style={{ color:C.gray }}>Automatically end the session after this period of inactivity (60-second warning first).</div>
+            </div>
+            <select value={sessTimeout} onChange={e=>setSessTimeoutVal(Number(e.target.value))}
+              className="text-[12px] px-2.5 py-1.5 bg-white outline-none flex-shrink-0" style={{ border:'1px solid #d7dbd1', color:C.charcoal }}>
+              <option value={0}>Disabled</option>
+              <option value={2}>2 minutes (demo)</option>
+              <option value={10}>10 minutes</option>
+              <option value={15}>15 minutes</option>
+              <option value={30}>30 minutes</option>
+            </select>
+          </div>
           <div className="mt-4 p-3 flex items-start gap-2.5" style={{ background:'#eaf0e4', border:'1px solid #d3e0c6' }}>
             <I.Shield size={16} style={{ color:C.forest, marginTop:1 }}/>
             <p className="text-[11.5px] leading-relaxed" style={{ color:'#3c4a2e' }}>This platform operates under FISMA moderate controls. All data is encrypted at rest and in transit. Access is restricted to authorized government personnel with an active CAC.</p>
@@ -2416,6 +2431,84 @@ const Footer = () => (
 /* ============================================================
    ROOT APP
 ============================================================ */
+/* ============================================================
+   SESSION TIMEOUT — real inactivity-based auto-logout with warning
+============================================================ */
+const SESSION_DEFAULT_MIN = 2;   // demo-friendly default; adjustable in Settings
+const SESSION_WARN_SEC = 60;     // warning window (seconds) before auto-logout
+const getSessionTimeoutMin = () => {
+  const v = cvLoadSettings().sessionTimeoutMin;
+  return (v === undefined || v === null) ? SESSION_DEFAULT_MIN : Number(v);
+};
+
+const SessionTimeout = ({ onLogout }) => {
+  const [warning, setWarning] = useState(false);
+  const [remaining, setRemaining] = useState(SESSION_WARN_SEC);
+  const lastActivity = useRef(Date.now());
+  const warnRef = useRef(false);
+
+  const resetSession = () => { lastActivity.current = Date.now(); warnRef.current = false; setWarning(false); };
+
+  useEffect(() => {
+    const onActivity = () => { if (!warnRef.current) lastActivity.current = Date.now(); };
+    const evts = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'wheel', 'click'];
+    evts.forEach(e => window.addEventListener(e, onActivity, { passive: true }));
+
+    const evaluate = () => {
+      const min = getSessionTimeoutMin();
+      if (!min || min <= 0) { if (warnRef.current) { warnRef.current = false; setWarning(false); } return; }
+      const totalMs = min * 60000;
+      const warnMs = Math.min(SESSION_WARN_SEC * 1000, totalMs / 2);
+      const idle = Date.now() - lastActivity.current;
+      if (idle >= totalMs) { warnRef.current = false; onLogout(); return; }
+      if (idle >= totalMs - warnMs) {
+        warnRef.current = true;
+        setWarning(true);
+        setRemaining(Math.max(0, Math.ceil((totalMs - idle) / 1000)));
+      } else if (warnRef.current) {
+        warnRef.current = false;
+        setWarning(false);
+      }
+    };
+
+    const tick = setInterval(evaluate, 1000);
+    const onVis = () => { if (document.visibilityState === 'visible') evaluate(); };
+    document.addEventListener('visibilitychange', onVis);
+
+    return () => { clearInterval(tick); document.removeEventListener('visibilitychange', onVis); evts.forEach(e => window.removeEventListener(e, onActivity)); };
+  }, []);
+
+  const mm = Math.floor(remaining / 60);
+  const ss = String(remaining % 60).padStart(2, '0');
+  const pct = Math.max(0, Math.min(100, (remaining / SESSION_WARN_SEC) * 100));
+
+  return (
+    <Modal open={warning} onClose={undefined}>
+      <div>
+        <div className="flex items-center gap-2.5 px-6 py-4 border-b" style={{ borderColor:'#eceee9' }}>
+          <span className="flex items-center justify-center w-8 h-8" style={{ background:`${C.critical}1a` }}><I.Clock size={17} style={{ color:C.critical }}/></span>
+          <h3 className="font-bold text-[15px]" style={{ color:C.charcoal }}>Session Timeout Warning</h3>
+        </div>
+        <div className="px-6 py-6 text-center">
+          <p className="text-[13px] leading-relaxed mb-4" style={{ color:'#5a6152' }}>
+            Your session is about to expire due to inactivity. For your security, you will be automatically logged out.
+          </p>
+          <div className="text-[40px] font-extrabold tabular-nums leading-none" style={{ color:C.critical }}>{mm}:{ss}</div>
+          <div className="text-[10px] font-bold uppercase tracking-wide mt-1 mb-4" style={{ color:C.gray }}>Time Remaining</div>
+          <div className="h-2 w-full overflow-hidden mb-5" style={{ background:C.track }}>
+            <div className="h-full transition-all duration-1000 ease-linear" style={{ width:`${pct}%`, background:C.critical }}/>
+          </div>
+          <div className="flex gap-3">
+            <Btn color="forest" full icon={I.Refresh} onClick={resetSession}>Continue Session</Btn>
+            <Btn color="charcoal" type="outline" full icon={I.Lock} onClick={()=>{ warnRef.current=false; onLogout(); }}>Log Out Now</Btn>
+          </div>
+          <p className="text-[10px] mt-4" style={{ color:C.gray }}>Session activity is logged to the audit trail per U.S. Government policy.</p>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
 const App = () => {
   const [loggedIn, setLoggedIn] = useState(false);
   const [page, setPage] = useState('dashboard');
@@ -2448,6 +2541,7 @@ const App = () => {
       <Footer/>
       <AIAssistant open={aiOpen} setOpen={setAiOpen}/>
       <TaskModal task={task}/>
+      <SessionTimeout onLogout={()=>{ setLoggedIn(false); setPage('dashboard'); }}/>
     </div>
   );
 };
